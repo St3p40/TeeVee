@@ -1,0 +1,7 @@
+[Unit]
+Description=Teevee self-test
+
+[Service]
+Type=oneshot
+Nice=15
+ExecStart=%h/teevee-00c/tools/selftest.sh

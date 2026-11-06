@@ -1,0 +1,759 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TeeVee</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#100d14">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  /* One small design system: 8 px spacing scale, 12 / 10 px radii, 44 px touch targets, one accent (the face's own coral). */
+  :root {
+    --bg:#100d14; --s1:#1a1520; --s2:#241c2b; --line:#33293b; --fg:#f4ecf1; --dim:#a99dab; --acc:#f25259; --acc2:#ff7177;
+    --ok:#5fd38d; --bad:#e07a5f; --r:12px; --rc:10px;
+    --t-s:12px; --t-m:14px; --t-l:16px; --t-xl:22px;
+  }
+  html[data-theme=light] { --bg:#e4dccf; --s1:#efe7da; --s2:#f6f0e5; --line:#c9bcaa; --fg:#2a2230; --dim:#5e5361; --acc:#b02a33; --acc2:#8f2029; --ok:#22703f; --bad:#a0441f; color-scheme:light; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html { color-scheme:dark; }
+  #theme { margin-left:auto; min-height:44px; padding:0 14px; border:1px solid var(--line); border-radius:var(--rc); background:var(--s1); color:var(--fg); font:inherit; cursor:pointer; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:var(--t-l)/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  button, select, input { font:inherit; color:inherit; }
+  .wrap { max-width:1040px; margin:0 auto; padding:0 16px 40px; }
+  header.top { display:flex; align-items:center; gap:12px; padding:16px 0 12px; flex-wrap:wrap; }
+  header.top .logo { width:32px; height:32px; flex:none; border-radius:8px; }
+  header.top h1 { margin:0; font-size:var(--t-xl); letter-spacing:.01em; }
+  header.top h1 b { color:var(--acc); }
+  header.top span { color:var(--dim); font-size:var(--t-m); }
+
+  .layout { display:grid; grid-template-columns:1fr; gap:16px; align-items:start; }
+  .layout > * { min-width:0; }  /* a grid column may shrink below the canvas's 320 px (small phones, a visible scrollbar) */
+  /* the face stays in view while you change settings */
+  .left { position:sticky; top:0; z-index:20; padding:8px 0 8px; background:linear-gradient(var(--bg) 85%, transparent); }
+  .stage { position:relative; background:#000; border-radius:var(--r); overflow:hidden; touch-action:none; user-select:none; margin:0 auto;
+           width:min(100%, calc(34vh * 4 / 3)); border:1px solid var(--line); }
+  canvas { display:block; width:100%; height:auto; aspect-ratio:4/3; cursor:pointer; }
+  .stage .tools { position:absolute; top:8px; right:8px; display:flex; gap:8px; opacity:.0; transition:opacity .2s; }
+  .stage:hover .tools, .stage:focus-within .tools { opacity:1; }
+  .tool { width:36px; height:36px; border-radius:50%; border:0; background:rgba(16,13,20,.72); color:var(--fg); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; padding:0; }
+  .tool:hover { background:rgba(16,13,20,.95); }
+  /* while the face floats in its own window (picture in picture), its place here says so */
+  #pipnote { display:none; aspect-ratio:4/3; align-items:center; justify-content:center; text-align:center; padding:16px; color:var(--dim); font-size:var(--t-m); cursor:pointer; }
+  .stage.away #pipnote { display:flex; } .stage.away .tools { display:none; }
+  #toast { position:absolute; left:0; right:0; bottom:0; padding:6px 12px; text-align:center; font-size:var(--t-m); background:rgba(16,13,20,.82);
+           opacity:0; transition:opacity .25s; pointer-events:none; }
+  #toast.on { opacity:1; }
+  .hint { color:var(--dim); font-size:var(--t-s); text-align:center; margin:6px 0 0; }
+
+  /* how it is doing, under the face: its feeling, awake or not, and its needs */
+  .status { margin:8px auto 0; width:min(100%, calc(34vh * 4 / 3)); background:var(--s1); border:1px solid var(--line); border-radius:var(--r); padding:8px 12px; }
+  .status .feel { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:28px; }
+  .status .feel b { font-size:var(--t-l); text-transform:capitalize; }
+  .pill { font-size:var(--t-s); color:var(--dim); border:1px solid var(--line); border-radius:999px; padding:2px 10px; white-space:nowrap; }
+  .pill.asleep { color:#9ab8ff; border-color:#2e3a5c; } .pill.drowsy { color:#f0c43a; border-color:#4a3c14; }
+  .needs { display:none; grid-template-columns:auto 1fr; gap:8px 12px; align-items:center; margin-top:8px; font-size:var(--t-s); color:var(--dim); }
+  .meter { height:6px; border-radius:3px; background:var(--line); overflow:hidden; }
+  .meter i { display:block; height:100%; width:0; border-radius:3px; transition:width .6s, background-color .6s; }
+
+  @media (min-width: 900px) {
+    .layout { grid-template-columns:minmax(340px, 440px) 1fr; gap:24px; }
+    .left { top:16px; padding:0; background:none; }
+    .stage { width:100%; }
+    .stage .tools { opacity:1; }
+    .status { width:100%; padding:12px 16px; margin-top:12px; }
+    .needs { display:grid; }   /* on a phone only the feeling line shows: the face stays small at the top */
+  }
+
+  nav.tabs { display:flex; gap:4px; padding:4px; background:var(--s1); border:1px solid var(--line); border-radius:var(--r); overflow-x:auto; scrollbar-width:none; }
+  nav.tabs::-webkit-scrollbar { display:none; }
+  nav.tabs button { flex:1 0 auto; min-height:40px; padding:0 14px; border:0; border-radius:var(--rc); background:none; color:var(--dim); cursor:pointer; font-size:var(--t-m); font-weight:600; }
+  nav.tabs button[aria-selected=true] { background:var(--s2); color:var(--fg); box-shadow:inset 0 -2px 0 var(--acc); }
+  @media (max-width: 420px) { nav.tabs button { padding:0 8px; } }  /* all five tabs fit on a small phone, none cut off at the edge */
+  @media (max-width: 340px) { nav.tabs button { padding:0 5px; } }
+  .panel { display:none; padding-top:16px; } .panel.on { display:block; }
+
+  h2 { margin:20px 0 8px; font-size:var(--t-s); text-transform:uppercase; letter-spacing:.08em; color:var(--dim); font-weight:700; }
+  h2:first-child { margin-top:0; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; }
+  .chip { min-height:44px; padding:0 16px; border-radius:22px; border:1px solid var(--line); background:var(--s1); cursor:pointer; font-size:var(--t-m); display:inline-flex; align-items:center; gap:8px; }
+  .chip:hover { border-color:#4a3c55; background:var(--s2); } .chip:active { transform:scale(.97); }
+  .chip kbd { font:var(--t-s) ui-monospace,Menlo,Consolas,monospace; color:var(--dim); background:var(--bg); padding:1px 6px; border-radius:6px; border:1px solid var(--line); }
+  .chip.sel { border-color:var(--acc); background:rgba(242,82,89,.14); }
+  /* a preset's colours: its face colour on its own background */
+  .chip .dot { width:18px; height:18px; border-radius:50%; flex:none; margin-left:-6px; border:4px solid var(--pbg, #000); background:var(--pfc, var(--acc)); box-shadow:0 0 0 1px var(--line); }
+  .btn { min-height:44px; padding:0 18px; border-radius:var(--rc); border:1px solid var(--line); background:var(--s2); cursor:pointer; font-weight:600; }
+  .btn.pri { background:var(--acc); border-color:var(--acc); color:#fff; } .btn.pri:hover { background:var(--acc2); }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .grow { flex:1; }
+
+  details.group { background:var(--s1); border:1px solid var(--line); border-radius:var(--r); margin:12px 0; }
+  details.group > summary { list-style:none; cursor:pointer; padding:12px 16px; font-weight:700; display:flex; justify-content:space-between; align-items:center; }
+  details.group > summary::-webkit-details-marker { display:none; }
+  details.group > summary::after { content:"+"; color:var(--dim); font-size:20px; line-height:1; }
+  details.group[open] > summary::after { content:"–"; }
+  details.group .body { padding:0 16px 8px; }
+  .opt { padding:10px 0; border-top:1px solid var(--line); }
+  .opt:first-child { border-top:0; }
+  .opt .top { display:flex; justify-content:space-between; align-items:center; gap:12px; min-height:28px; }
+  .opt .name { color:var(--fg); font-size:var(--t-m); } .opt .val { color:var(--dim); font-variant-numeric:tabular-nums; font-size:var(--t-m); }
+  .opt small { display:block; color:var(--dim); font-size:var(--t-s); margin-top:2px; }
+  input[type=range] { width:100%; height:28px; margin:2px 0 0; accent-color:var(--acc); background:none; }
+  select { min-height:40px; padding:0 12px; border-radius:var(--rc); border:1px solid var(--line); background:var(--s2); max-width:60%; }
+  input[type=color] { width:56px; height:36px; padding:2px; border-radius:var(--rc); border:1px solid var(--line); background:var(--s2); }
+  .sw { appearance:none; -webkit-appearance:none; width:46px; height:28px; border-radius:14px; background:var(--line); position:relative; cursor:pointer; flex:none; transition:background .15s; }
+  .sw::after { content:""; position:absolute; top:3px; left:3px; width:22px; height:22px; border-radius:50%; background:var(--fg); transition:transform .15s; }
+  .sw:checked { background:var(--acc); } .sw:checked::after { transform:translateX(18px); }
+
+  .bar { position:relative; height:8px; border-radius:4px; background:var(--line); margin:6px 0 4px; }
+  .bar::after { content:""; position:absolute; left:50%; top:-2px; width:1px; height:12px; background:var(--dim); }
+  .bar i { position:absolute; top:0; height:8px; border-radius:4px; }
+  .urge { padding:8px 0; border-top:1px solid var(--line); } .urge:first-child { border-top:0; }
+  .urge .top { display:flex; justify-content:space-between; font-size:var(--t-m); }
+  .urge .why { color:var(--dim); font-size:var(--t-s); }
+  .urge code { font:var(--t-s) ui-monospace,Menlo,Consolas,monospace; color:var(--dim); margin-left:8px; font-weight:400; }
+  .stats { display:grid; grid-template-columns:repeat(2, 1fr); gap:8px; }
+  @media (min-width: 600px) { .stats { grid-template-columns:repeat(4, 1fr); } }
+  .stat { background:var(--s1); border:1px solid var(--line); border-radius:var(--r); padding:10px 12px; }
+  .stat b { display:block; font-size:var(--t-l); font-variant-numeric:tabular-nums; }
+  .stat span { display:block; color:var(--dim); font-size:var(--t-s); }
+  .senses { display:flex; flex-wrap:wrap; gap:6px; }
+  .sense { font-size:var(--t-s); color:var(--dim); background:var(--s1); border:1px solid var(--line); border-radius:999px; padding:3px 10px; }
+  .sense b { color:var(--fg); font-weight:600; margin-left:4px; font-variant-numeric:tabular-nums; }
+  .card { background:var(--s1); border:1px solid var(--line); border-radius:var(--r); padding:12px 16px; }
+  .dim { color:var(--dim); font-size:var(--t-m); }
+  .day { padding:12px 0; border-top:1px solid var(--line); } .day:first-child { border-top:0; }
+  .day b { margin-right:8px; }
+  .legend { display:flex; flex-wrap:wrap; gap:8px 16px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; white-space:nowrap; }
+  .legend i { width:12px; height:12px; border-radius:3px; display:inline-block; }
+  .hours { display:flex; gap:2px; margin-top:8px; } .hours i { flex:1; height:18px; border-radius:3px; display:block; }
+  #graph { width:100%; height:360px; display:block; background:var(--bg); border-radius:var(--rc); }
+  .keys { display:grid; grid-template-columns:minmax(96px, max-content) 1fr; gap:10px 16px; align-items:center; font-size:var(--t-m); }
+  .keys .k { display:flex; flex-wrap:wrap; align-items:center; gap:4px; color:var(--dim); }
+  .keys kbd { display:inline-block; min-width:24px; text-align:center; font:var(--t-s)/1.6 ui-monospace,Menlo,Consolas,monospace; color:var(--fg);
+              background:var(--bg); border:1px solid var(--line); border-bottom-width:2px; border-radius:6px; padding:0 6px; }
+  footer { color:var(--dim); font-size:var(--t-s); margin-top:24px; }
+  @media (prefers-reduced-motion: reduce) { * { transition:none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><img class="logo" src="icons/icon.svg" alt=""><h1><b>Tee</b>Vee</h1><span>a little face with feelings, in your browser</span><button id="theme" type="button" aria-pressed="false">Light</button></header>
+
+  <div class="layout">
+    <div class="left">
+      <div class="stage" id="stage">
+        <canvas id="screen" width="320" height="240" aria-label="TeeVee's face"></canvas>
+        <div class="tools"><button class="tool" id="shot" title="Save picture" aria-label="Save picture"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11"/><path d="m7 10 5 5 5-5"/><path d="M5 20h14"/></svg></button><button class="tool" id="pip" title="Float on top of other windows" aria-label="Picture in picture" style="display:none"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><rect x="12" y="12" width="7" height="5" rx="1" fill="currentColor" stroke="none"/></svg></button><button class="tool" id="full" title="Fullscreen" aria-label="Fullscreen"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></svg></button></div>
+        <div id="pipnote">It is floating in its own little window.<br>Click here to bring it back.</div>
+        <div id="toast" role="status"></div>
+      </div>
+      <p class="hint">Move over it: the eyes follow. Click to poke, drag to pet.</p>
+      <div class="status" aria-live="polite">
+        <div class="feel"><span class="dim">Feeling <b id="feeling">…</b></span><span class="pill" id="awake">awake</span></div>
+        <div class="needs">
+          <span>Attention</span><div class="meter"><i id="n0"></i></div>
+          <span>Rest</span><div class="meter"><i id="n1"></i></div>
+          <span>Play</span><div class="meter"><i id="n2"></i></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="right">
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="react">React</button><button role="tab" data-tab="look">Look</button>
+        <button role="tab" data-tab="mind">Mind</button><button role="tab" data-tab="diary">Diary</button><button role="tab" data-tab="about">Keys</button>
+      </nav>
+
+      <section class="panel" id="p-react">
+        <div id="firstrun" hidden style="background:var(--s2);border-radius:12px;padding:12px 16px;margin-bottom:16px">
+          <strong>Hello, this is TeeVee.</strong> It lives in this page and learns as you go: stroke it to pet it, tap to poke it, and leave it alone to see what it does. It saves itself in this browser.
+          <button id="firstrunok" style="display:block;margin-top:8px;min-height:44px;padding:0 16px">Got it</button>
+        </div>
+        <h2>Touch it</h2>
+        <div class="chips">
+          <button class="chip" data-k="p">Pet<kbd>P</kbd></button><button class="chip" data-k="o">Poke<kbd>O</kbd></button>
+          <button class="chip" data-k="v">Praise<kbd>V</kbd></button><button class="chip" data-k="s">Scold<kbd>S</kbd></button>
+          <button class="chip" data-k="l">Love<kbd>L</kbd></button><button class="chip" data-k="g">Greet<kbd>G</kbd></button>
+          <button class="chip" data-k="n">Annoy<kbd>N</kbd></button><button class="chip" data-k="d">Startle<kbd>D</kbd></button>
+        </div>
+        <h2>Something happens</h2>
+        <div class="chips">
+          <button class="chip" data-k="w">Win<kbd>W</kbd></button><button class="chip" data-k="f">Fail<kbd>F</kbd></button>
+          <button class="chip" data-k="z">Tired<kbd>Z</kbd></button><button class="chip" data-k="b">Bored<kbd>B</kbd></button>
+          <button class="chip" data-k="c">Confused<kbd>C</kbd></button>
+        </div>
+        <h2>Show</h2>
+        <div class="chips">
+          <button class="chip" data-k="e">Next emote<kbd>E</kbd></button><button class="chip" data-k=".">Next face<kbd>.</kbd></button>
+          <button class="chip" data-code="127">Back to mood<kbd>&#9003;</kbd></button><button class="chip" data-k=" ">Sleep / wake<kbd>&#9251;</kbd></button>
+        </div>
+      </section>
+
+      <section class="panel" id="p-look">
+        <div class="row">
+          <button class="btn pri" id="random">Randomize a part</button>
+          <button class="btn" id="randomall">Randomize everything</button>
+          <button class="btn" id="season">Look of the season</button>
+          <button class="btn" id="bexport">Save behaviour file</button>
+          <button class="btn" id="pexport">Save a pack</button>
+          <button class="btn" id="pbackup">Save a full backup</button>
+          <label class="btn" style="display:inline-flex;align-items:center;cursor:pointer">Install a pack<input id="pimport" type="file" accept=".tvpack" style="display:none"></label>
+          <label class="btn" style="display:inline-flex;align-items:center;cursor:pointer">Load behaviour file<input id="bimport" type="file" accept=".txt" style="display:none"></label>
+          <button class="btn" id="share">Copy link to this look</button>
+        </div>
+        <h2>Presets</h2>
+        <div class="chips" id="presets"></div>
+        <h2>Character</h2>
+        <div class="card">
+          <div class="opt"><div class="top"><span class="name">Personality</span><select id="pers"></select></div></div>
+          <div class="opt"><div class="top"><span class="name">Fisheye lens</span><span class="val" id="fishv">off</span></div><input type="range" id="fish" min="0" max="1" step="0.05" value="0"><small>Bends the whole picture like a lens. The mind net makes it a little stronger when something surprises it.</small></div>
+          <div class="opt"><div class="top"><span class="name">Turn</span><span class="val" id="turnv">off</span></div><input type="range" id="turn" min="0" max="35" step="1" value="0"><small>The face turns on its own axes (3D, one face only), with the mind net's gaze (degrees).</small></div>
+          <div class="opt"><div class="top"><span class="name">Let it change its own look</span><input class="sw" type="checkbox" id="wardrobe"></div><small>Now and then, when it feels like it, it changes its look and learns which ones you like.</small></div>
+          <div class="opt"><div class="top"><span class="name">Chance of changing</span><span class="val" id="lookcv"></span></div><input type="range" id="lookc" min="0" max="1" step="0.05"><small>When it feels like a new look, how likely it really changes.</small></div>
+          <div class="opt"><div class="top"><span class="name">Whole look, or a part</span><span class="val" id="lookwv"></span></div><input type="range" id="lookw" min="0" max="1" step="0.05"><small>How many changes are the whole look; the rest change only its colours, eyes, pupils or mouth.</small></div>
+        </div>
+        <h2>Face settings</h2>
+        <div id="optlist"></div>
+      </section>
+
+      <section class="panel" id="p-mind">
+        <div class="stats" id="mindinfo"></div>
+        <label class="dim" style="display:block;margin:12px 0 6px"><input type="checkbox" id="pin"> Keep this look (the mind net stops changing it until you untick this)</label>
+        <div class="card" style="margin:12px 0"><canvas id="graph" aria-label="The mind net as a graph"></canvas>
+          <div class="dim" style="margin-top:6px">Left: what it senses. Middle: its inner state (<span id="inner-n">its</span> units that keep moving by themselves). Right: what it wants. Lines show the strongest causes.</div></div>
+        <div class="card" style="margin:12px 0" id="urges"></div>
+        <div class="dim">A small neural network decides how TeeVee looks around, smiles, fidgets or glitches. The bars are what it wants right now; it learns from how you treat it: petting and praise reinforce what it was doing, pokes and scolding discourage it.</div>
+        <h2>What it senses</h2><div class="senses" id="senses"></div>
+      </section>
+
+      <section class="panel" id="p-diary">
+        <div class="card" id="days"></div>
+        <p class="dim">Each row is a day, its 24 boxes the hours from midnight.</p>
+        <div class="dim legend"><span><i style="background:rgba(95,211,141,.85)"></i>happy</span><span><i style="background:rgba(224,122,95,.85)"></i>unhappy</span><span><i style="background:#2f2733"></i>no data</span></div>
+      </section>
+
+      <section class="panel" id="p-about">
+        <h2>Mouse or finger</h2>
+        <div class="card keys">
+          <span class="k">hover</span><span>the eyes follow</span>
+          <span class="k">click</span><span>poke</span>
+          <span class="k">drag</span><span>pet</span>
+        </div>
+        <h2>Keys</h2>
+        <div class="card keys">
+          <span class="k"><kbd>P</kbd><kbd>O</kbd><kbd>V</kbd><kbd>S</kbd></span><span>pet, poke, praise, scold</span>
+          <span class="k"><kbd>D</kbd><kbd>W</kbd><kbd>F</kbd><kbd>G</kbd></span><span>startle, win, fail, greet</span>
+          <span class="k"><kbd>Z</kbd><kbd>N</kbd><kbd>L</kbd><kbd>C</kbd><kbd>B</kbd></span><span>tired, annoy, love, confuse, bore</span>
+          <span class="k"><kbd>1</kbd>–<kbd>9</kbd></span><span>hold a face</span>
+          <span class="k"><kbd>,</kbd><kbd>.</kbd></span><span>previous / next face</span>
+          <span class="k"><kbd>Backspace</kbd></span><span>back to its own mood</span>
+          <span class="k"><kbd>E</kbd></span><span>next emote (with <kbd>Shift</kbd>: previous)</span>
+          <span class="k"><kbd>Tab</kbd></span><span>next look (with <kbd>Shift</kbd>: previous)</span>
+          <span class="k"><kbd>R</kbd></span><span>change a part of the look (with <kbd>Shift</kbd>: all of it)</span>
+          <span class="k"><kbd>Q</kbd></span><span>next personality</span>
+          <span class="k"><kbd>Space</kbd></span><span>sleep / wake</span>
+        </div>
+        <footer>The same code as the little robot's firmware, compiled to WebAssembly. Nothing is sent anywhere; your look and what it learned stay in this browser.</footer>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script src="teevee.js?v=__BUILD__"></script>
+<script>
+// If anything goes wrong (an old browser without WebAssembly, a blocked file...) say so on the page instead of staying blank.
+function fail(e) { const t = document.getElementById('toast'); t.textContent = 'Could not start: ' + (e && e.message || e); t.classList.add('on'); }
+addEventListener('error', e => fail(e.error || e.message));
+addEventListener('unhandledrejection', e => fail(e.reason));
+(async () => {
+  const W = 320, H = 240, KEY = 'teevee-state-v1';
+  const $ = id => document.getElementById(id);
+  // The engine's files carry the build's stamp (web/build.sh), so a new page never runs with an old engine from a cache.
+  const tv = await createTeevee({ locateFile: p => p + '?v=__BUILD__' });
+  const SIG = {
+    tv_init: [null, ['number', 'number']], tv_frame: ['number', ['number']], tv_pointer: [null, ['number', 'number', 'number']],
+    tv_gaze: [null, ['number', 'number']], tv_key: ['number', ['number', 'number']],
+    tv_toast: ['string', []], tv_style_text: ['number', ['string']], tv_set_style: [null, ['number']],
+    tv_set_personality: [null, ['number']], tv_style_index: ['number', []], tv_personality: ['number', []],
+    tv_opt_count: ['number', []], tv_opt_key: ['string', ['number']], tv_opt_type: ['number', ['number']], tv_opt_min: ['number', ['number']],
+    tv_opt_max: ['number', ['number']], tv_opt_help: ['string', ['number']], tv_opt_options: ['string', ['number']], tv_opt_value: ['string', ['number']],
+    tv_random_look: [null, ['number']], tv_set_look_change: [null, ['number', 'number']], tv_look_chance: ['number', []], tv_look_whole: ['number', []], tv_style_count: ['number', []], tv_style_name: ['string', ['number']],
+    tv_personality_count: ['number', []], tv_personality_name: ['string', ['number']],
+    tv_pack_export: ['number', ['number']], tv_pack_import: ['string', ['number']], tv_season_look: ['string', []], tv_behaviour: ['string', ['string']], tv_behaviour_export: ['string', []], tv_tastes: ['string', []], tv_mind_state: ['number', []], tv_mind_inner_count: ['number', []], tv_look_updates: ['number', []], tv_look_name: ['string', []], tv_look_score: ['number', []], tv_look_top_name: ['string', ['number']], tv_look_top_score: ['number', ['number']], tv_set_look_pinned: [null, ['number']], tv_look_pinned: ['number', []], tv_head_turn: ['number', []], tv_fisheye_max: ['number', []], tv_temper_v: ['number', []], tv_temper_a: ['number', []], tv_set_wardrobe: [null, ['number']], tv_set_head_turn: [null, ['number']], tv_set_fisheye: [null, ['number']], tv_wardrobe: ['number', []],
+    tv_preset_face: ['number', ['number']], tv_preset_bg: ['number', ['number']], tv_feeling: ['string', []], tv_need: ['number', ['number']],
+    tv_mind_state_name: ['string', []], tv_frame_changed: ['number', []], tv_presence: [null, []], tv_battery: [null, ['number']], tv_watched: [null, ['number']], tv_body: [null, ['number', 'number', 'number']],
+    tv_save: ['number', []], tv_look: ['string', []], tv_diary: ['string', []], tv_load: [null, []], tv_new_robot: [null, ['number']], tv_dirty: ['number', []], tv_mind_json: ['string', []],
+  };
+  const f = {}; for (const n in SIG) f[n] = tv.cwrap(n, ...SIG[n]);
+  // An engine from another build (a cache that still had the old one): reload once with fresh files instead of failing half-way
+  const missing = Object.keys(SIG).filter(n => typeof f[n] !== 'function');
+  if (missing.length) {
+    if (!sessionStorage.getItem('teevee-reloaded')) { sessionStorage.setItem('teevee-reloaded', '1'); location.reload(); return; }
+    throw new Error('the page and its engine are from different versions (' + missing[0] + '): clear the site data and reload');
+  }
+  sessionStorage.removeItem('teevee-reloaded');
+
+  // ---- saved state: the files the engine keeps, in localStorage ----
+  const b64 = u8 => btoa(String.fromCharCode(...u8)), unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+  function restore() {
+    try {
+      const s = JSON.parse(localStorage.getItem(KEY) || 'null');
+      if (!s) return;
+      tv.FS.writeFile('/state/teevee.cfg', s.cfg);
+      if (s.mind) tv.FS.writeFile('/state/mind.bin', unb64(s.mind));
+      if (s.diary) tv.FS.writeFile('/state/diary.bin', unb64(s.diary));
+      if (s.look) tv.FS.writeFile('/state/lookmind.bin', unb64(s.look));
+      if (s.tastes) tv.FS.writeFile('/state/tastes.bin', unb64(s.tastes));
+      const b = localStorage.getItem('teevee-behaviour');
+      if (b) tv.FS.writeFile('/state/behaviour.txt', b);
+    } catch (e) { /* no storage or a damaged copy: start fresh */ }
+  }
+  // One file from the engine's /state, or null if the engine has not written it yet.
+  function stored(name) { try { return b64(tv.FS.readFile('/state/' + name)); } catch (e) { return null; } }
+  function persist() {
+    try {
+      if (!f.tv_save()) return;
+      localStorage.setItem(KEY, JSON.stringify({ cfg: tv.FS.readFile('/state/teevee.cfg', { encoding: 'utf8' }),
+        mind: stored('mind.bin'), diary: stored('diary.bin'), look: stored('lookmind.bin'), tastes: stored('tastes.bin') }));
+    } catch (e) { /* private window: nothing is kept */ }
+  }
+  // The head, lens and pin sliders show what the engine has (after a load they show the saved values).
+  function syncView() {
+    const h = f.tv_head_turn(); $('turn').value = h; $('turnv').textContent = h ? Math.round(h) + '\u00b0' : 'off';
+    const k = f.tv_fisheye_max(); $('fish').value = k; $('fishv').textContent = k ? Math.round(k * 100) + '%' : 'off';
+    $('pin').checked = !!f.tv_look_pinned();
+    const pc = v => Math.round(v * 100) + '%';
+    $('lookc').value = f.tv_look_chance(); $('lookcv').textContent = pc(f.tv_look_chance());
+    $('lookw').value = f.tv_look_whole(); $('lookwv').textContent = pc(f.tv_look_whole());
+    $('lookc').oninput = $('lookw').oninput = () => { f.tv_set_look_change(+$('lookc').value, +$('lookw').value); $('lookcv').textContent = pc(+$('lookc').value); $('lookwv').textContent = pc(+$('lookw').value); };
+  }
+
+  f.tv_init((Math.random() * 4294967295) >>> 0, performance.now() | 0);
+  const firstVisit = !localStorage.getItem(KEY);
+  restore(); f.tv_load();
+  if (firstVisit) f.tv_new_robot((Math.random() * 4294967295) >>> 0);  // a new robot: its own personality, the owner's own look
+  if (firstVisit) {  // a word for new visitors, once
+    $('firstrun').hidden = false;
+    $('firstrunok').onclick = () => { $('firstrun').hidden = true; };
+  }
+  syncView();
+  // a shared link (#look=...) wins over what this browser had saved
+  try { const m = location.hash.match(/^#look=(.*)$/); if (m) f.tv_style_text(decodeURIComponent(m[1])); } catch (e) { /* a damaged link: ignore it */ }
+
+  // ---- light or dark: the owner's choice, kept in this browser ----
+  const setTheme = (t) => {
+    document.documentElement.dataset.theme = t;
+    $('theme').textContent = t === 'light' ? 'Dark' : 'Light';
+    $('theme').setAttribute('aria-pressed', t === 'light');
+    try { localStorage.setItem('teevee-theme', t); } catch (e) { /* not kept: fine */ }
+  };
+  let savedTheme = 'dark';
+  try { savedTheme = localStorage.getItem('teevee-theme') || 'dark'; } catch (e) { /* the default */ }
+  setTheme(savedTheme);
+  $('theme').onclick = () => setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light');
+  $('season').onclick = () => { f.tv_season_look(); };
+  $('bexport').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([f.tv_behaviour_export()], { type: 'text/plain' }));
+    a.download = 'behaviour.txt';
+    a.click();
+  };
+  const packOut = (all, name) => {
+    if (!f.tv_pack_export(all)) return alert('Could not make the pack.');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([tv.FS.readFile('/state/out.tvpack')]));
+    a.download = name;
+    a.click();
+    tv.FS.unlink('/state/out.tvpack');
+  };
+  $('pexport').onclick = () => packOut(0, 'teevee.tvpack');
+  $('pbackup').onclick = () => packOut(1, 'teevee-backup.tvpack');
+  $('pimport').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const all = confirm('Also replace what it has learned, if this file holds that? This cannot be undone. Cancel keeps what it has learned.');
+    tv.FS.writeFile('/state/in.tvpack', new Uint8Array(await file.arrayBuffer()));
+    const report = f.tv_pack_import(all ? 1 : 0);
+    tv.FS.unlink('/state/in.tvpack');
+    syncView();
+    persist();
+    alert(report);
+    e.target.value = '';
+  };
+  $('bimport').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const text = await file.text(), why = f.tv_behaviour(text);
+    if (!why || why.startsWith('line')) { try { localStorage.setItem('teevee-behaviour', text); } catch (err) { /* not kept: fine */ } }
+    alert(why ? 'Behaviour file: ' + why : 'Behaviour file loaded.');
+    e.target.value = '';
+  };
+
+  // ---- tabs ----
+  const tabs = [...document.querySelectorAll('nav.tabs button')];
+  function showTab(name) {
+    if (!$('p-' + name)) name = 'react';
+    tabs.forEach(b => { const on = b.dataset.tab === name; b.setAttribute('aria-selected', on); if (on && b.scrollIntoView) b.scrollIntoView({ inline: 'center', block: 'nearest' }); });
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('on', p.id === 'p-' + name));
+    try { localStorage.setItem('teevee-tab', name); } catch (e) { /* fine */ }
+    if (name === 'diary') showDiary();
+  }
+  tabs.forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  let startTab = 'react'; try { startTab = localStorage.getItem('teevee-tab') || 'react'; } catch (e) { /* fine */ }
+  showTab(startTab);
+
+  // ---- look: presets, character, and every option from the firmware's own table ----
+  const GROUPS = [
+    ['Colour', ['hue', 'sat', 'val', 'bg', 'tint', 'daytint'], true],
+    ['Eyes', ['eye', 'eye_split', 'eye_r', 'eye_w', 'eye_h', 'eye_w_r', 'eye_h_r', 'lid_r', 'hue_r', 'brows_r', 'round', 'eye_gap', 'eye_y', 'lid', 'lashes', 'brows', 'blush'], true],
+    ['Pupils', ['pupil', 'pupil_r', 'pupil_ink', 'pupil_size', 'glint'], false],
+    ['Mouth', ['mouth', 'mouth_solid', 'mouth_w', 'mouth_y', 'line'], false],
+    ['Motion', ['speed', 'bounce'], false],
+    ['Effects', ['glow', 'pixel', 'glitch', 'split'], false],
+  ];
+  const LABEL = { hue:'Colour', sat:'Colour strength', val:'Brightness', bg:'Background', tint:'Colour follows mood', daytint:'Colour follows the time of day',
+    eye_w:'Eye width', eye_h:'Eye height', round:'Eye roundness', eye_gap:'Eye spacing', eye_y:'Eye position', lid:'Sleepy eyelids', lashes:'Eyelashes',
+    brows:'Eyebrows', blush:'Blush', glow:'Glow', eye:'Eye style', eye_split:'Own settings for the right eye', eye_r:'Right eye style', pupil_r:'Right eye pupil', eye_w_r:'Right eye width', eye_h_r:'Right eye height', lid_r:'Right eye lid', hue_r:'Right eye colour shift', brows_r:'Right eye brow', pupil_ink:'Pupil colour', pupil:'Pupil shape', pupil_size:'Pupil size', glint:'White glint', mouth:'Mouth style', mouth_solid:'Solid mouth',
+    mouth_w:'Mouth width', mouth_y:'Mouth position', line:'Line thickness', tongue:'Tongue', speed:'Motion speed', bounce:'Bounciness',
+    pixel:'Pixelate', glitch:'Glitch', split:'RGB split' };
+  const NOTE = { pixel:'Block size in pixels; 0 is off.', split:'Red slides left and blue right, like 3D glasses; 0 is off.', glitch:'0 is off; 1 is an occasional slip, 10 constant chaos. The mind net can raise it.',
+    daytint:'Warm at dusk, cool and dim at night.', eye:'Solid, outline, bars, dots, spiral, sparkle, cross. The pupil has its own setting.', eye_split:'Off: both eyes match. On: the right eye uses its own options below.', pupil_r:'Shape inside the right eye (when its own settings are on).',
+    pupil:'Cross, diamond, moon are new; outline makes hollow eyes; none hides the pupil.', glow:'A soft halo behind the whole face; 0 is off.', hue_r:'Turns the right eye\'s colour, in degrees (0 = the face colour).', pupil_ink:'Dark is the background, white is a bright pupil, face is the face colour (good with outline eyes).' };
+  const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+
+  function buildOptions() {
+    const byKey = {}; for (let i = 0; i < f.tv_opt_count(); i++) byKey[f.tv_opt_key(i)] = i;
+    const box = $('optlist');
+    const wasOpen = {}; box.querySelectorAll('details.group').forEach(d => wasOpen[d.dataset.title] = d.open);  // a rebuild keeps what was open
+    box.innerHTML = '';
+    // the right eye's own options only matter (and only show) when "own settings for the right eye" is on
+    const split = 'eye_split' in byKey && f.tv_opt_value(byKey.eye_split) === '1', RIGHT = ['eye_r', 'pupil_r', 'eye_w_r', 'eye_h_r', 'lid_r', 'hue_r', 'brows_r'];
+    const groups = GROUPS.map(([n, keys, open]) => [n, keys.filter(k => k in byKey), open]);
+    const rest = Object.keys(byKey).filter(k => !GROUPS.some(g => g[1].includes(k)));
+    if (rest.length) groups.push(['More', rest, false]);
+    for (const [title, keys, open] of groups) {
+      const d = document.createElement('details'); d.className = 'group'; d.dataset.title = title; d.open = title in wasOpen ? wasOpen[title] : open;
+      const s = document.createElement('summary'); s.textContent = title; d.append(s);
+      const body = document.createElement('div'); body.className = 'body'; d.append(body);
+      for (const key of keys) if (split || !RIGHT.includes(key)) body.append(optionRow(byKey[key], key));
+      box.append(d);
+    }
+  }
+  function optionRow(i, key) {
+    const type = f.tv_opt_type(i), val = f.tv_opt_value(i), row = document.createElement('div'); row.className = 'opt';
+    const top = document.createElement('div'); top.className = 'top';
+    const name = document.createElement('span'); name.className = 'name'; name.textContent = LABEL[key] || cap(f.tv_opt_help(i)); top.append(name);
+    let after = null;
+    if (type === 0) {
+      const lo = f.tv_opt_min(i), hi = f.tv_opt_max(i), shown = document.createElement('span'); shown.className = 'val'; shown.textContent = val; top.append(shown);
+      const r = document.createElement('input'); r.type = 'range'; r.min = lo; r.max = hi; r.step = hi - lo >= 20 ? 1 : hi - lo >= 8 ? 0.5 : (hi - lo) / 100; r.value = val;
+      r.oninput = () => { shown.textContent = r.value; f.tv_style_text(key + ' ' + r.value); };
+      after = r;
+    } else if (type === 1) {
+      const c = document.createElement('input'); c.type = 'checkbox'; c.className = 'sw'; c.checked = val === '1';
+      c.onchange = () => { f.tv_style_text(key + ' ' + (c.checked ? 1 : 0)); if (key === 'eye_split') buildOptions(); }; top.append(c);
+    } else if (type === 2) {
+      const sel = document.createElement('select');
+      for (const o of f.tv_opt_options(i).split('|')) sel.add(new Option(cap(o), o));
+      sel.value = val; sel.onchange = () => f.tv_style_text(key + ' ' + sel.value); top.append(sel);
+    } else {
+      const c = val.split(' ').map(Number), p = document.createElement('input'); p.type = 'color';
+      p.value = '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
+      p.oninput = () => f.tv_style_text(key + ' ' + [1, 3, 5].map(k => parseInt(p.value.substr(k, 2), 16)).join(' ')); top.append(p);
+    }
+    row.append(top); if (after) row.append(after);
+    if (NOTE[key]) { const n = document.createElement('small'); n.textContent = NOTE[key]; row.append(n); }
+    return row;
+  }
+  function buildPresets() {
+    const box = $('presets'); box.innerHTML = '';
+    for (let i = 0; i < f.tv_style_count(); i++) {
+      const b = document.createElement('button'); b.className = 'chip'; b.dataset.i = i;
+      const hex = v => '#' + (v >>> 0).toString(16).padStart(6, '0'), dot = document.createElement('span'); dot.className = 'dot';
+      dot.style.setProperty('--pfc', hex(f.tv_preset_face(i))); dot.style.setProperty('--pbg', hex(f.tv_preset_bg(i)));
+      b.append(dot, f.tv_style_name(i));
+      b.onclick = () => { f.tv_set_style(i); sync(); }; box.append(b);
+    }
+  }
+  function sync() {  // show what the engine really has (a preset changes many options; a saved look is loaded at start)
+    $('pers').value = f.tv_personality();
+    const cur = f.tv_style_index(), look = f.tv_look();
+    // a preset chip is highlighted only while its look is untouched
+    document.querySelectorAll('#presets .chip').forEach(b => b.classList.toggle('sel', +b.dataset.i === cur && presetLook === look));
+    buildOptions();
+  }
+  let presetLook = '';
+  const fillSel = (sel, n, name) => { for (let i = 0; i < n; i++) sel.add(new Option(cap(name(i)), i)); };
+  buildPresets(); fillSel($('pers'), f.tv_personality_count(), f.tv_personality_name);
+  $('pers').onchange = () => f.tv_set_personality(+$('pers').value);
+  $('wardrobe').checked = f.tv_wardrobe() === 1;
+  $('wardrobe').onchange = () => f.tv_set_wardrobe($('wardrobe').checked ? 1 : 0);
+  $('fish').oninput = () => { const v = +$('fish').value; f.tv_set_fisheye(v); $('fishv').textContent = v ? Math.round(v * 100) + '%' : 'off'; };
+  $('turn').oninput = () => { const v = +$('turn').value; f.tv_set_head_turn(v); $('turnv').textContent = v ? v + '\u00b0' : 'off'; };
+  $('random').onclick = () => { f.tv_random_look(0); presetLook = ''; sync(); say('a part changed'); };
+  $('randomall').onclick = () => { f.tv_random_look(1); presetLook = ''; sync(); say('a new look'); };
+  presetLook = f.tv_look(); sync();
+  document.querySelectorAll('#presets').forEach(box => box.addEventListener('click', () => { presetLook = f.tv_look(); sync(); }));
+
+  let toastTimer = 0;
+  function say(text) {
+    if (!text) return;
+    const t = $('toast'); t.textContent = text; t.classList.add('on');
+    clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), 1600);
+  }
+  function key(k, shift) { if (f.tv_key(k, shift ? 1 : 0)) say(f.tv_toast()); }
+  document.querySelectorAll('.chip[data-k], .chip[data-code]').forEach(b => b.onclick = () => key(b.dataset.code ? +b.dataset.code : b.dataset.k.charCodeAt(0), false));
+  $('shot').onclick = () => {  // the picture as a PNG, 3x as large
+    const c = document.createElement('canvas'); c.width = W * 3; c.height = H * 3;
+    c.getContext('2d').drawImage($('screen'), 0, 0, c.width, c.height);
+    c.toBlob(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'teevee.png'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); });
+  };
+  $('share').onclick = async () => {
+    const url = location.href.split('#')[0] + '#look=' + encodeURIComponent(f.tv_look());
+    try { await navigator.clipboard.writeText(url); say('link copied'); } catch (e) { prompt('Copy this link:', url); }
+  };
+  $('full').onclick = () => ($('stage').requestFullscreen || $('stage').webkitRequestFullscreen).call($('stage'));
+
+  function onKey(e) {
+    if (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.length === 1 ? e.key.charCodeAt(0) : e.key === 'Tab' ? 9 : e.key === 'Backspace' ? 127 : 0;
+    if (!k) return;
+    e.preventDefault();
+    key(k, e.shiftKey);
+    if (k === 114 || k === 82 || k === 9) { presetLook = ''; sync(); }
+  }
+  addEventListener('keydown', onKey);
+
+  // ---- pointer: hover = look, press = touch (poke / pet) ----
+  const cv = $('screen'), ctx = cv.getContext('2d');
+  let down = false;
+  const pos = e => { const r = cv.getBoundingClientRect(); return [Math.max(0, Math.min(W - 1, ((e.clientX - r.left) / r.width * W) | 0)),
+                                                                Math.max(0, Math.min(H - 1, ((e.clientY - r.top) / r.height * H) | 0))]; };
+  cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); down = true; f.tv_pointer(1, ...pos(e)); });
+  cv.addEventListener('pointermove', e => { const [x, y] = pos(e); if (down) f.tv_pointer(1, x, y); else f.tv_gaze((x - 160) / 160 * 0.8, (y - 120) / 120 * 0.8); });
+  const up = e => { if (down) { down = false; f.tv_pointer(0, ...pos(e)); } };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+
+  // ---- what the browser senses, for the mind net ----
+  // You are here: moving or typing on the page (at most once a second). A low battery (where the browser tells: Chrome): 0 at 30 % .. 1 at 5 %,
+  // 0 while charging. A phone's motion sensor: shaking it is motion, holding it at another angle than at first is tilt (like the board's sensor).
+  let presentAt = 0;
+  const present = () => { const t = performance.now(); if (t - presentAt > 1000) { presentAt = t; f.tv_presence(); } };
+  for (const ev of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart']) addEventListener(ev, present, { passive: true });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) present(); });
+  if (navigator.getBattery) navigator.getBattery().then(b => {
+    const upd = () => f.tv_battery(!b.charging && b.level < 0.3 ? (0.3 - b.level) / 0.25 : 0);
+    upd(); b.addEventListener('levelchange', upd); b.addEventListener('chargingchange', upd);
+  }).catch(() => {});
+  let motion = 0, tilt = [0, 0], base = null, bodyAt = 0;
+  const sendBody = () => { const t = performance.now(); if (t - bodyAt > 100) { bodyAt = t; f.tv_body(motion, tilt[0], tilt[1]); motion = 0; } };
+  addEventListener('devicemotion', e => {
+    const r = e.rotationRate; if (!r || r.alpha == null) return;
+    motion = Math.max(motion, Math.min(1, (Math.abs(r.alpha) + Math.abs(r.beta) + Math.abs(r.gamma)) / 300)); sendBody();
+  });
+  addEventListener('deviceorientation', e => {
+    if (e.beta == null || e.gamma == null) return;
+    if (!base) base = [e.gamma, e.beta];  // how it was held at first is "level"
+    const s = d => Math.max(-1, Math.min(1, Math.sin(d * Math.PI / 180)));
+    tilt = [s(e.gamma - base[0]), s(e.beta - base[1])]; sendBody();
+  });
+  // Being looked at, from what the page knows (no camera, no permission): 1 with the pointer on the face in the last few seconds, 0.5 when the
+  // page is in front and focused, 0.2 when it is visible but another window has the focus, 0 in a hidden tab; floating (picture in picture) 0.7.
+  let onFaceAt = -1e9;
+  for (const ev of ['pointermove', 'pointerdown']) cv.addEventListener(ev, () => onFaceAt = performance.now(), { passive: true });
+  setInterval(() => {
+    const near = performance.now() - onFaceAt < 4000;
+    let v = 0;
+    if (pipWin) v = near ? 1 : 0.7;
+    else if (!document.hidden) v = near ? 1 : document.hasFocus() ? 0.5 : 0.2;
+    f.tv_watched(v);
+  }, 500);
+  // iPhones ask before a page may read the motion sensor, and only after a tap: ask on the first touch of the face
+  if (window.DeviceMotionEvent && typeof DeviceMotionEvent.requestPermission === 'function')
+    cv.addEventListener('pointerdown', () => { DeviceMotionEvent.requestPermission().catch(() => {});
+      if (window.DeviceOrientationEvent && DeviceOrientationEvent.requestPermission) DeviceOrientationEvent.requestPermission().catch(() => {}); }, { once: true });
+
+  // ---- picture in picture: the face floats above other windows ----
+  // Chrome / Edge (Document Picture-in-Picture): the canvas itself moves into the little window, so it can still be petted and poked, and
+  // the animation runs on that window's clock (a hidden tab's own clock stops). Elsewhere, if the browser has video picture in picture
+  // (Safari): a live video of the canvas, to watch only. Firefox has neither: no button.
+  let pipWin = null, pipVideo = null;
+  const docPip = 'documentPictureInPicture' in window, vidPip = !!(document.pictureInPictureEnabled && cv.captureStream);
+  if (docPip || vidPip) $('pip').style.display = '';
+  function bringBack() {
+    if (pipWin) { pipWin.close(); return; }
+    if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+  }
+  $('pipnote').onclick = bringBack;
+  $('pip').onclick = async () => {
+    try {
+      if (docPip) {
+        if (pipWin) return bringBack();
+        pipWin = await documentPictureInPicture.requestWindow({ width: 400, height: 300 });
+        const d = pipWin.document;
+        d.title = 'TeeVee';
+        d.body.style.cssText = 'margin:0;background:#000;height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden';
+        cv.style.cssText = 'width:min(100vw, calc(100vh * 4 / 3));height:auto;aspect-ratio:4/3;touch-action:none;cursor:pointer';
+        d.body.append(cv);
+        $('stage').classList.add('away');
+        pipWin.addEventListener('keydown', onKey);
+        pipWin.addEventListener('pagehide', () => {  // closed (or the page is going away): the face comes home
+          cv.style.cssText = '';
+          $('stage').prepend(cv);
+          $('stage').classList.remove('away');
+          pipWin = null;
+          run();
+        });
+        run();  // the loop moves to the little window's clock
+      } else {
+        if (document.pictureInPictureElement) return bringBack();
+        if (!pipVideo) {
+          pipVideo = document.createElement('video');
+          pipVideo.muted = true; pipVideo.playsInline = true;
+          pipVideo.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none';
+          pipVideo.srcObject = cv.captureStream(30);
+          document.body.append(pipVideo);
+          pipVideo.addEventListener('leavepictureinpicture', () => $('stage').classList.remove('away'));
+        }
+        await pipVideo.play();
+        await pipVideo.requestPictureInPicture();
+        $('stage').classList.add('away');
+      }
+    } catch (e) { say('picture in picture is not available here'); }
+  };
+
+  // ---- diary ----
+  function showDiary() {
+    const j = JSON.parse(f.tv_diary()).diary, box = $('days');
+    box.innerHTML = '';
+    if (!j.days.length) { box.innerHTML = '<span class="dim">Nothing yet: pet it, poke it, come back later.</span>'; return; }
+    for (const d of j.days) {
+      const age = j.today - d.id, row = document.createElement('div'); row.className = 'day';
+      const counts = d.n.map((v, i) => v ? j.kinds[i] + ' ' + v : '').filter(Boolean).join(', ') || 'quiet day';
+      const cells = d.mood.map((v, hh) => `<i title="${String(hh).padStart(2, '0')}:00 ${v == null ? 'no data' : v}" style="background:${v == null ? '#2f2733' : v >= 0 ? `rgba(95,211,141,${.25 + v / 130})` : `rgba(224,122,95,${.25 - v / 130})`}"></i>`).join('');
+      row.innerHTML = `<b>${age == 0 ? 'Today' : age == 1 ? 'Yesterday' : age + ' days ago'}</b><span class="dim">${counts}</span><div class="hours">${cells}</div>`;
+      box.appendChild(row);
+    }
+  }
+
+  // ---- mind net ----
+  const sg = v => (v > 0 ? '+' : '') + v;
+  const URGE_LABEL = { look_x:'Look left / right', look_y:'Look up / down', energy:'Energy', curious:'Curious', mirth:'Mirth', suspicious:'Suspicious',
+    drowsy:'Drowsy', restless:'Restless', blink:'Blinking', mouth:'Mouth', glitch:'Glitch', yawn:'Yawn', emote:'Show a feeling', pupils:'Pupils',
+    sleep:'Go to sleep', wardrobe:'Change its look', lens:'Lens', head_x:'Turn its head', head_y:'Nod its head' };
+  function showMind() {
+    const j = JSON.parse(f.tv_mind_json()).brain;
+    const tv_ = f.tv_temper_v(), ta_ = f.tv_temper_a();
+    $('pin').checked = !!f.tv_look_pinned(); $('pin').onchange = () => f.tv_set_look_pinned($('pin').checked ? 1 : 0);
+    const sgn = v => (v >= 0 ? '+' : '') + v.toFixed(2);
+    const stat = (big, small) => `<div class="stat"><b>${big}</b><span>${small}</span></div>`;
+    $('mindinfo').innerHTML = stat(j.updates, 'reactions learned from') +
+      stat(f.tv_look_name(), `look it wears (${f.tv_look_updates()} learned; next ${f.tv_look_top_name(1)})`) +
+      stat(j.activity, 'inner activity') + stat(`${sgn(tv_)} / ${sgn(ta_)}`, 'temperament: mood / energy');
+    mindEdges = j;
+    $('urges').innerHTML = j.names.map((n, i) => {
+      const v = j.urges[i], bar = `<div class="bar"><i style="${v < 0 ? 'right' : 'left'}:50%;width:${Math.abs(v) * 50}%;background:${v < 0 ? 'var(--bad)' : 'var(--ok)'}"></i></div>`;
+      const why = j.why[i].map(w => w[0] + ' ' + sg(w[1])).join(', '), learned = j.learned[i].length ? ' · learned: ' + j.learned[i].map(w => w[0] + ' ' + sg(w[1])).join(', ') : '';
+      return `<div class="urge"><div class="top"><span><b>${URGE_LABEL[n] || n}</b><code>${n}</code></span><span class="dim">${v.toFixed(2)}</span></div>${bar}<div class="why">${cap(j.help[i])}. Because ${why}${learned}</div></div>`;
+    }).join('');
+    $('senses').innerHTML = j.senses.map((s, i) => Math.abs(j.x[i]) >= 0.05 ? `<span class="sense">${s.replace(/_/g, ' ')}<b>${j.x[i].toFixed(2)}</b></span>` : '').join('') || '<span class="dim">nothing much</span>';
+  }
+
+  // ---- the mind net as a living graph ----
+  let mindEdges = null;
+  const gcv = $('graph'), gctx = gcv.getContext('2d');
+  function drawGraph() {
+    if (!mindEdges) return;
+    const dpr = window.devicePixelRatio || 1, cw = gcv.clientWidth, ch = gcv.clientHeight;
+    if (gcv.width !== (cw * dpr | 0)) { gcv.width = cw * dpr | 0; gcv.height = ch * dpr | 0; }
+    gctx.setTransform(dpr, 0, 0, dpr, 0, 0); gctx.clearRect(0, 0, cw, ch);
+    const nS = mindEdges.senses.length, nU = mindEdges.names.length, nI = f.tv_mind_inner_count();
+    const st = new Float32Array(tv.HEAPF32.buffer, f.tv_mind_state(), nS + nI + nU);
+    const xs = 14, xu = cw - 90, xi = (xs + xu) / 2, pad = 14;  // the grid sits midway between the senses and the urges (their names take the right edge)
+    const sy = i => pad + (ch - 2 * pad) * (i + 0.5) / nS, uy = u => pad + (ch - 2 * pad) * (u + 0.5) / nU;
+    $('inner-n').textContent = nI;
+    // the inner units as a grid that fits the canvas
+    const cols = nI > 64 ? 8 : 4, rows = Math.ceil(nI / cols), gap = Math.min(30, (ch - 2 * pad) / rows), dx = 22;
+    const ix = j => xi + ((j % cols) - (cols - 1) / 2) * dx, iy = j => ch / 2 + (((j / cols) | 0) - (rows - 1) / 2) * gap;
+    const gl = ix(0) - dx / 2, gr = ix(cols - 1) + dx / 2, gt = iy(0) - gap / 2, gb = iy(nI - 1) + gap / 2;
+    const col = (v, a) => v >= 0 ? `rgba(95,211,141,${a})` : `rgba(224,122,95,${a})`;
+    const width = amt => Math.min(Math.abs(amt), 1.5) * 2 + 0.3;
+    // the strongest causes of each urge: sense -> urge curves first, so they pass behind the grid
+    for (let u = 0; u < nU; u++) for (const [name, amt] of mindEdges.why[u]) {
+      const si = mindEdges.senses.indexOf(name);
+      if (si < 0) continue;
+      gctx.lineWidth = width(amt); gctx.strokeStyle = col(amt, 0.35); gctx.beginPath();
+      gctx.moveTo(xs, sy(si)); gctx.bezierCurveTo(xi, sy(si), xi, uy(u), xu, uy(u)); gctx.stroke();
+    }
+    gctx.fillStyle = getComputedStyle(gcv).backgroundColor; gctx.globalAlpha = 0.82;  // a veil behind the grid: the curves read as passing under it
+    gctx.beginPath(); if (gctx.roundRect) gctx.roundRect(gl - 4, gt - 4, gr - gl + 8, gb - gt + 8, 10); else gctx.rect(gl - 4, gt - 4, gr - gl + 8, gb - gt + 8); gctx.fill(); gctx.globalAlpha = 1;
+    // the inner state's share of an urge: one line from the grid's edge (it is the sum over all units)
+    for (let u = 0; u < nU; u++) for (const [name, amt] of mindEdges.why[u]) {
+      if (name !== 'inner state') continue;
+      gctx.lineWidth = width(amt); gctx.strokeStyle = col(amt, 0.45); gctx.beginPath();
+      gctx.moveTo(gr, Math.min(Math.max(uy(u), gt + 4), gb - 4)); gctx.lineTo(xu, uy(u)); gctx.stroke();
+    }
+    // nodes: senses, inner state, urges (size and colour follow the value; never bigger than their spacing)
+    const node = (x, y, v, r0, r1) => { const r = r0 + Math.min(Math.abs(v), 1) * (r1 - r0); gctx.fillStyle = col(v, 0.9); gctx.beginPath(); gctx.arc(x, y, r, 0, 6.2832); gctx.fill(); };
+    const fit = (step, big) => Math.max(1.5, Math.min(big, step * 0.45));
+    const rS = fit((ch - 2 * pad) / nS, 6), rI = fit(Math.min(gap, dx), 7), rU = fit((ch - 2 * pad) / nU, 7);
+    for (let i = 0; i < nS; i++) node(xs, sy(i), st[i], Math.min(2, rS), rS);
+    for (let j = 0; j < nI; j++) node(ix(j), iy(j), st[nS + j], Math.min(3, rI), rI);
+    gctx.font = '11px system-ui, sans-serif'; gctx.textBaseline = 'middle';
+    for (let u = 0; u < nU; u++) {
+      const v = st[nS + nI + u]; node(xu, uy(u), v, Math.min(3, rU), rU);
+      gctx.fillStyle = '#f4ecf1'; gctx.fillText(mindEdges.names[u], xu + 14, uy(u));
+    }
+    // the busiest senses get a name, strongest first, skipping any that would overlap a name already there
+    gctx.fillStyle = '#a99dab';
+    const named = [];
+    for (const i of [...Array(nS).keys()].filter(i => Math.abs(st[i]) > 0.35).sort((a, b) => Math.abs(st[b]) - Math.abs(st[a])))
+      if (named.every(y => Math.abs(y - sy(i)) >= 13)) { named.push(sy(i)); gctx.fillText(mindEdges.senses[i], xs + 10, sy(i)); }
+  }
+
+  // ---- run ----
+  let lastMind = 0, lastSave = performance.now(), lastStatus = 0;
+  function showStatus() {  // the card under the face: feeling, awake / drowsy / asleep, needs (green .. yellow .. red as they get urgent)
+    $('feeling').textContent = f.tv_feeling();
+    const m = f.tv_mind_state_name(), a = $('awake'); a.textContent = m; a.className = 'pill ' + m;
+    for (let i = 0; i < 3; i++) {
+      const v = Math.min(1, Math.max(0, f.tv_need(i))), bar = $('n' + i);
+      bar.style.width = Math.max(4, v * 100) + '%';
+      bar.style.backgroundColor = v > 0.7 ? 'var(--acc)' : v > 0.4 ? '#f0c43a' : 'var(--ok)';
+    }
+  }
+  // The canvas reads the engine's picture where it lies (no copy); the view is made again only if the engine's memory grew.
+  let view = null, viewBuf = null, lastFrame = -1e9;
+  function frame(now) {
+    if (now - lastFrame < 15) return;  // at most ~60 a second: a 120 / 144 Hz screen would otherwise do twice the work for nothing
+    lastFrame = now;
+    const p = f.tv_frame(now | 0);
+    if (f.tv_frame_changed() || tv.HEAPU32.buffer !== viewBuf) {
+      if (tv.HEAPU32.buffer !== viewBuf) { viewBuf = tv.HEAPU32.buffer; view = new ImageData(new Uint8ClampedArray(viewBuf, p, W * H * 4), W, H); }
+      ctx.putImageData(view, 0, 0);
+    }
+    if ($('p-mind').classList.contains('on')) { if (now - lastMind > 400) { showMind(); lastMind = now; } drawGraph(); }
+    if (now - lastStatus > 500) { showStatus(); lastStatus = now; }
+    if (now - lastSave > 30000) { lastSave = now; if (f.tv_dirty()) persist(); }
+  }
+  // One loop at a time, on the clock of the window that shows the face (the page, or the floating window): run() starts a new one and the
+  // old one stops by itself. A video picture-in-picture in a hidden tab gets a timer instead (the tab's own clock stops when hidden).
+  let gen = 0;
+  function run() {
+    const g = ++gen, win = pipWin || window;
+    // the page's own clock, not the callback's: a floating window's timestamps start near 0 (its own document's start) and would run time backwards
+    const tick = () => { if (g !== gen) return; frame(performance.now()); win.requestAnimationFrame(tick); };
+    win.requestAnimationFrame(tick);
+  }
+  run();
+  setInterval(() => { if (document.hidden && document.pictureInPictureElement && !pipWin) frame(performance.now()); }, 50);
+  addEventListener('pagehide', persist);
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+  document.addEventListener('visibilitychange', () => { if (document.hidden) persist(); });
+})();
+</script>
+</body>
+</html>

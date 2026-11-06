@@ -1,0 +1,118 @@
+# Builds the desktop app (desktop/, teevee-qt: a Qt 6 window) for Linux, macOS and Windows on every push, and attaches the downloads to a GitHub
+# release when a tag v* is pushed (git tag v0.1 && git push --tags). SDL3 is downloaded and linked in (TEEVEE_FETCH_SDL3); the Qt libraries are
+# copied next to the program (windeployqt, macdeployqt), so each download runs without installing Qt. The builds are on the run's page under
+# "Artifacts". NOT VERIFIED YET: this workflow has not run on GitHub since the switch from the SDL program to Qt.
+name: desktop
+
+on:
+  push:
+    branches: ['**']
+    paths: [desktop/**, src/core/**, .github/workflows/desktop.yml]
+    tags: ['v*']
+  pull_request:
+    paths: [desktop/**, src/core/**, .github/workflows/desktop.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # only used by the release step on a tag
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04  # Qt 6 from the distribution
+            name: linux-x64
+          - os: macos-14  # Apple silicon (Qt from Homebrew is arm64 only)
+            name: macos-arm64
+          - os: windows-2022
+            name: windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: 'Linux packages (Qt 6, and what SDL needs to build: X11, Wayland, sound, input)'
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build pkg-config qt6-base-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev libdecor-0-dev libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev \
+            libasound2-dev libpulse-dev libdbus-1-dev libudev-dev libibus-1.0-dev
+
+      - name: macOS Qt 6 (Homebrew)
+        if: runner.os == 'macOS'
+        run: brew install qt@6
+
+      - name: Windows Qt 6 (aqtinstall)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python -m pip install aqtinstall
+          python -m aqt install-qt --outputdir C:/Qt windows desktop 6.8.3 win64_msvc2022_64
+
+      - name: Configure
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            macOS)   qt="$(brew --prefix qt@6)" ;;
+            Windows) qt="C:/Qt/6.8.3/msvc2022_64" ;;
+            *)       qt="" ;;
+          esac
+          cmake -S desktop -B build -DCMAKE_BUILD_TYPE=Release -DTEEVEE_FETCH_SDL3=ON ${qt:+-DCMAKE_PREFIX_PATH="$qt"} \
+            ${{ matrix.cmake_extra }}
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release --parallel
+
+      - name: Check it starts (help text)
+        if: runner.os != 'Windows'  # a Windows GUI program prints nothing when run from CI
+        run: QT_QPA_PLATFORM=offscreen ./build/teevee-qt --help
+
+      - name: 'Package (Qt libraries copied beside the program)'
+        shell: bash
+        run: |
+          mkdir -p out/teevee
+          case "$RUNNER_OS" in
+            Windows)
+              cp build/Release/teevee-qt.exe out/teevee/
+              C:/Qt/6.8.3/msvc2022_64/bin/windeployqt.exe --release --no-translations out/teevee/teevee-qt.exe
+              ;;
+            macOS)
+              cp -R build/teevee-qt.app out/teevee/ 2>/dev/null || cp build/teevee-qt out/teevee/
+              "$(brew --prefix qt@6)/bin/macdeployqt" out/teevee/teevee-qt.app 2>/dev/null || true
+              ;;
+            *)
+              cp build/teevee-qt out/teevee/
+              ;;
+          esac
+          cp desktop/README-download.txt out/teevee/README.txt
+          cd out
+          if [ "$RUNNER_OS" = Windows ]; then 7z a ../teevee-${{ matrix.name }}.zip teevee >/dev/null
+          elif [ "$RUNNER_OS" = macOS ]; then zip -qry ../teevee-${{ matrix.name }}.zip teevee
+          else tar czf ../teevee-${{ matrix.name }}.tar.gz teevee; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teevee-${{ matrix.name }}
+          path: teevee-${{ matrix.name }}.*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release with the downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # checks.yml adds the firmware to the same release: whichever runs first creates it, the other adds its files
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "TeeVee $GITHUB_REF_NAME" --generate-notes || true
+          gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber

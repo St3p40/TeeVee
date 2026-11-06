@@ -1,0 +1,433 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TeeVee</title>
+<style>
+:root{--bg:#100d14;--s1:#1a1520;--s2:#241c2b;--line:#33293b;--fg:#f4ecf1;--dim:#a99dab;--acc:#f25259;--ok:#5fd38d;--bad:#e07a5f}
+html[data-t=l]{--bg:#e4dccf;--s1:#efe7da;--s2:#f6f0e5;--line:#c9bcaa;--fg:#2a2230;--dim:#5e5361;--acc:#b02a33;--ok:#22703f;--bad:#a0441f;color-scheme:light}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html{color-scheme:dark}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:640px;margin:auto;padding:0 16px 48px}
+header.top{position:sticky;top:0;z-index:10;background:var(--bg);padding:12px 0 8px}
+.brand{display:flex;justify-content:space-between;align-items:baseline;gap:12px}.brand #st{flex:1;text-align:right}h1{margin:0;font-size:22px}h1 b{color:var(--acc)}
+#st{color:var(--dim);font-size:14px;min-height:1.4em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+nav.tabs{display:flex;gap:4px;margin-top:8px;padding:4px;background:var(--s1);border:1px solid var(--line);border-radius:12px;overflow-x:auto;scrollbar-width:none}
+nav.tabs::-webkit-scrollbar{display:none}
+nav.tabs button{flex:1 0 auto;min-height:40px;padding:0 14px;margin:0;border:0;border-radius:10px;background:none;color:var(--dim);font-weight:600;font-size:14px;width:auto}
+nav.tabs button[aria-selected=true]{background:var(--s2);color:var(--fg);box-shadow:inset 0 -2px 0 var(--acc)}
+.panel{display:none;padding-top:16px}.panel.on{display:block}
+h2{margin:20px 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);font-weight:700}.panel>h2:first-child,.card>h2:first-child{margin-top:0}
+.card{background:var(--s1);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin:12px 0}
+.muted{color:var(--dim);font-size:14px}.msg{font-size:14px;min-height:1.2em;margin-top:6px}.ok{color:var(--ok)}.bad{color:var(--bad)}
+input,select,button,textarea{font:inherit;color:inherit}
+input[type=text],input[type=password],input:not([type]),select,textarea,input[type=file]{width:100%;min-height:44px;margin:4px 0 8px;padding:9px 12px;background:var(--s2);border:1px solid var(--line);border-radius:10px}
+select{min-height:40px;padding:0 10px;margin:0}textarea{margin:6px 0;font:13px/1.4 ui-monospace,Menlo,Consolas,monospace;resize:vertical;tab-size:2}
+button{min-height:44px;padding:0 16px;margin:3px 2px;background:var(--s2);border:1px solid var(--line);border-radius:10px;cursor:pointer;font-weight:600}
+button:active{transform:scale(.98)}button.main{background:var(--acc);border-color:var(--acc);color:#fff;width:100%}
+.chips{display:flex;flex-wrap:wrap;gap:8px}.chip.sel{border-color:var(--acc);color:var(--acc)}.chip{min-height:44px;margin:0;border-radius:22px;background:var(--s1);font-weight:500;padding:0 16px}
+.row{display:flex;gap:8px;align-items:center}.row>*{flex:1}.row>button{flex:0}
+input[type=range]{width:100%;height:28px;margin:2px 0 0;padding:0;accent-color:var(--acc);background:none;border:0}
+#hue{appearance:none;-webkit-appearance:none;height:12px;border-radius:6px;background:linear-gradient(90deg,#f00,#ff0,#0f0,#0ff,#00f,#f0f,#f00)}
+input[type=color]{width:56px;height:36px;padding:2px;border:1px solid var(--line);border-radius:10px;background:var(--s2);margin:0}
+.opt{padding:10px 0;border-top:1px solid var(--line)}.opt:first-child{border-top:0}
+.opt .top{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:28px}.opt .val{color:var(--dim);font-variant-numeric:tabular-nums}
+.opt small{display:block;color:var(--dim);font-size:12px;margin-top:2px}
+.sw{appearance:none;-webkit-appearance:none;width:46px!important;min-height:28px!important;height:28px;margin:0!important;padding:0!important;border-radius:14px!important;background:var(--line)!important;border:0!important;position:relative;cursor:pointer;flex:none;transition:background .15s}
+.sw::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:var(--fg);transition:transform .15s}
+.sw:checked{background:var(--acc)!important}.sw:checked::after{transform:translateX(18px)}
+details.group{background:var(--s1);border:1px solid var(--line);border-radius:12px;margin:10px 0}
+details.group>summary{list-style:none;cursor:pointer;padding:12px 16px;font-weight:700;display:flex;justify-content:space-between;align-items:center}
+details.group>summary::-webkit-details-marker{display:none}details.group>summary::after{content:"+";color:var(--dim);font-size:20px;line-height:1}details.group[open]>summary::after{content:"\2013"}
+details.group .body{padding:0 16px 6px}
+.bar{display:block;position:relative;height:8px;border-radius:4px;background:var(--line);margin:6px 0 4px}.bar::after{content:"";position:absolute;left:50%;top:-2px;width:1px;height:12px;background:var(--dim)}.bar i{position:absolute;top:0;height:8px;border-radius:4px}
+.brow{padding:8px 0;border-top:1px solid var(--line)}.brow:first-child{border-top:0}.brow .top{display:flex;justify-content:space-between}
+.hours{display:flex;gap:2px;margin-top:8px}.hours i{flex:1;height:18px;border-radius:3px;display:block}
+details>summary{cursor:pointer}pre{margin:8px 0 0;overflow:auto}
+</style></head><body>
+<div class="wrap">
+<header class="top"><div class="brand"><h1><b>Tee</b>Vee</h1><div id="st">connecting…</div><button style="min-height:32px;padding:0 10px" onclick="theme(document.documentElement.dataset.t=='l'?'d':'l')">Light / dark</button></div>
+<nav class="tabs" role="tablist"><button data-tab="play">Play</button><button data-tab="look">Look</button><button data-tab="studio">Studio</button>
+<button data-tab="apps">Apps</button><button data-tab="settings">Settings</button><button data-tab="insight">Insight</button><button data-tab="setup">Setup</button></nav></header>
+
+<section class="panel" id="t-play">
+<h2>Touch it</h2><div class="chips" id="events"></div>
+<h2>Emotes</h2><div class="chips" id="emotes"></div>
+<h2>Show a face</h2><div class="chips" id="faces"></div>
+</section>
+
+<section class="panel" id="t-look">
+<h2>Presets</h2><div class="chips" id="presets"></div>
+<div id="lkbox" style="display:none"><h2>Saved looks (SD card)</h2><div class="chips" id="savedlooks"></div>
+<div class="row" style="margin-top:8px"><input id="lkname" placeholder="name for this look" maxlength="11"><button onclick="lookSave()">Save look</button></div></div>
+<h2>Face settings</h2><div id="look"></div>
+</section>
+
+<section class="panel" id="t-studio">
+<div class="card"><h2>Expression editor</h2>
+<div class="row"><select id="from"></select><button onclick="studioFrom()">start from</button></div>
+<div id="fields"></div>
+<div class="row"><input id="fname" placeholder="name (a-z 0-9 _ -)"><label class="muted" style="flex:0;white-space:nowrap">
+<input id="fmood" type="checkbox" class="sw" style="vertical-align:middle"> in moods</label></div>
+<div id="fpad" class="muted"></div>
+<button class="main" onclick="faceSave()">Save expression</button><div class="msg" id="smsg"></div><div id="myfaces"></div></div>
+<div class="card"><h2>Emote maker</h2>
+<input id="ename" placeholder="name"><div class="row"><select id="eface"></select><select id="eeyes"></select><select id="edeco"></select></div>
+<input id="etext" placeholder="text (with decoration 'text', up to 7 letters)" maxlength="7">
+<div class="muted" id="emsl"></div><input id="ems" type="range" min="500" max="6000" step="100" value="2500">
+<div class="muted" id="ewl"></div><input id="ewob" type="range" min="0" max="1" step="0.05" value="0.3">
+<button class="main" onclick="emoteSave()">Save &amp; play</button><div class="msg" id="emsg"></div><div id="myemotes"></div></div>
+<div class="card"><h2>Event &rarr; emote</h2><div id="evmap"></div></div>
+</section>
+
+<section class="panel" id="t-apps">
+<div class="card"><h2>Apps</h2>
+<div class="muted" id="appinfo"></div><div id="applist"></div></div>
+<div class="card" id="storebox" style="display:none"><h2>SD card</h2>
+<div class="muted">Ready apps from the card's /teevee/store, to install into flash.</div><div class="chips" id="store"></div>
+<button class="main" style="margin-top:8px;background:var(--s2);border-color:var(--line);color:var(--fg)" onclick="api('/api/msg',{shot:true}).then(()=>msg('storemsg','Screenshot saved in /teevee/shots',1))">Take a screenshot</button><div class="msg" id="storemsg"></div></div>
+<div class="card"><h2>Editor</h2>
+<div class="row"><input id="appname" placeholder="name (a-z 0-9 _ -)" maxlength="11"><input id="appfile" type="file" accept=".lua"></div>
+<textarea id="appsrc" rows="14" spellcheck="false" placeholder="-- your Lua app (see the cheat sheet below)"></textarea>
+<div class="row"><button class="main" onclick="appSave(false)">Save</button><button class="main" onclick="appSave(true)">Save &amp; run</button></div>
+<button class="main" id="sdsave" onclick="appSave(false,true)" style="display:none;margin-top:8px;background:var(--s2);border-color:var(--line)">Save to the SD card</button>
+<div class="msg" id="appmsg"></div>
+<details><summary class="muted">Lua API cheat sheet</summary><pre class="muted" style="white-space:pre-wrap;font-size:12px">functions you define (draw is required):
+  init()   update(dt) -> true to redraw   draw()
+  touch(kind, x, y) kind "down"|"move"|"up"   stop()
+drawing (screen 320x240, colours 0xRRGGBB):
+  gfx.clear(c)  gfx.rect(x,y,w,h,c[,radius])
+  gfx.circle(x,y,r,c)  gfx.line(x1,y1,x2,y2,c[,thick])
+  gfx.text(s,x,y,c[,size 1|2[,"l"|"c"|"r"]])  (y = centre)
+  gfx.measure(s[,size])  gfx.rgb(r,g,b)  gfx.redraw()
+the robot (apps are part of the face):
+  gfx.face(x,y,width)  draws the live face, centred on (x,y)
+  face.event(name[,k])  pet praise love greet poke annoy scold startle win fail tired confuse bore  (3 a second)
+  face.say(text)  up to 7 letters beside the face    face.urge(name)  the mind net's wish, -1..1
+  face.emote(name)  heart star dizzy cry sweat bubble angry question exclaim music laugh love think shy rage money glitch sparkle dead  (1 a second)
+  face.mood() -> valence, arousal, dominance
+other:
+  sys.ms()  sys.time() -> h,m,s,day,month,year,weekday
+  sys.light()  sys.log(...)  sys.exit()  sys.capture(true)
+  store.get(k[,default])  store.set(k,v)   (16 keys, remembered)
+  http.get("http://...", function(status, body) end)
+BOOT button (not available to apps) = next screen, long press = back to the face; hold a finger still 2.5 s = back to the face
+limits: 40 KB memory, 40 ms per call, 256 draw commands</pre></details></div>
+</section>
+
+<section class="panel" id="t-settings"><div id="sets"></div></section>
+
+<section class="panel" id="t-insight">
+<h2>Diary</h2><div class="card"><div id="diarydays"></div></div>
+<div class="card" id="dlogbox" style="display:none"><h2>Weeks</h2><div id="dlog"></div><div class="muted">From the SD card's log. Each bar is a day: the height is how much happened, green the care it got, red the hard moments.</div></div>
+<div class="muted">Each row is a day; the 24 boxes are the hours from midnight (green = happy, red = unhappy, grey = no data).</div>
+<h2>Mind net</h2><div class="muted" id="braininfo"></div>
+<div class="card"><canvas id="graph" style="width:100%;height:340px;display:block"></canvas><div class="muted" style="margin-top:6px">Left: what it senses. Middle: its inner state. Right: what it wants. Lines: the strongest causes.</div></div>
+<div class="card"><div id="brainurges"></div></div>
+<h2>Temperament and needs</h2><div class="card" id="moodbox"></div>
+<div class="muted">Bars: what it wants to do right now. It starts from sensible instincts, wanders a little on its own, and learns from your reactions: petting and praise reinforce what it was doing, pokes and scolding discourage it.</div>
+<h2>What it senses</h2><div class="muted" id="brainsenses"></div>
+</section>
+
+<section class="panel" id="t-setup">
+<div class="card"><h2>Wi-Fi</h2>
+<div class="muted" id="cur"></div>
+<div class="row"><select id="nets" style="flex:1"><option value="">scanning…</option></select><button onclick="scan()" aria-label="rescan">&#8635;</button></div>
+<input id="ssid" placeholder="network name (2.4 GHz)">
+<input id="pass" type="password" placeholder="password">
+<button class="main" onclick="saveWifi()">Connect</button><div class="msg" id="wmsg"></div></div>
+<div class="card"><h2>Time zone</h2>
+<div class="muted" id="tzname"></div><input id="tz">
+<button class="main" onclick="saveTz()">Save time zone</button><div class="msg" id="tmsg"></div></div>
+<div class="card"><h2>Packs and backup</h2>
+<div class="muted">A pack holds looks, a behaviour file, apps and pictures. A full backup also holds its settings and what it has learned: keep that one private. Neither holds Wi-Fi details or the PIN.</div>
+<div class="row"><button class="main" onclick="packOut(false)">Save a pack</button><button class="main" onclick="packOut(true)">Save a full backup</button></div>
+<input id="packfile" type="file" accept=".tvpack"><label class="muted"><input id="packall" type="checkbox" style="width:auto"> also replace what it has learned, if the file holds that</label>
+<button class="main" onclick="packIn()">Install</button><div class="msg" id="packmsg"></div></div>
+<div class="card"><h2>Firmware</h2><div class="muted" id="fwinfo"></div>
+<input id="fw" type="file" accept=".bin"><button class="main" onclick="upload()">Update firmware</button>
+<button class="main" id="sdfw" style="display:none;margin-top:8px;background:var(--s2);border-color:var(--line);color:var(--fg)" onclick="sdFw()">Update from the SD card</button>
+<div class="msg" id="fwmsg"></div></div>
+</section>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+// Login: on the home network the API needs a token, got once with the PIN Teevee shows on its screen.
+let tok='';try{tok=localStorage.teevee||''}catch(e){}
+let lp=null;const login=()=>lp||(lp=(async()=>{for(;;){const pin=prompt("Enter the 4-digit PIN shown on TeeVee's screen");
+ if(pin===null)throw new Error('no pin');
+ const j=await(await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})})).json();
+ if(j.token){tok=j.token;try{localStorage.teevee=tok}catch(e){}return}alert(j.error+' (5 misses lock it for a minute)')}})().finally(()=>lp=null));
+async function api(p,b){for(;;){const r=await fetch(p,{method:b===undefined?'GET':'POST',
+ headers:{'Content-Type':'application/json','X-Teevee-Token':tok},body:b===undefined?undefined:JSON.stringify(b)});
+ if(r.status!==401)return r.json();await login()}}
+const msg=(id,t,ok)=>{$(id).textContent=t;$(id).className='msg '+(ok?'ok':'bad')};
+function btns(id,list,fn){$(id).innerHTML='';for(const n of list){const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>fn(n);$(id).appendChild(b)}}
+btns('events',['pet','praise','love','poke','annoy','startle','confuse','bore','greet'],n=>api('/api/msg',{event:n}));
+btns('emotes',['heart','love','star','sparkle','money','laugh','music','shy','think','question','exclaim','sweat','cry','dizzy','dead','angry','rage','glitch','bubble'],n=>api('/api/msg',{emote:n}));
+btns('faces',['happy','sad','angry','surprised','sleepy','excited','content','scared','bored','skeptical','confused','smug'],n=>api('/api/msg',{show:n,ttl:4}));
+$('nets').onchange=e=>{if(e.target.value)$('ssid').value=e.target.value};
+async function scan(){$('nets').innerHTML='<option value="">scanning…</option>';
+ for(let i=0;i<20;i++){const r=await api('/api/scan');if(r.networks){$('nets').innerHTML='<option value="">choose a network…</option>';
+  for(const n of r.networks)$('nets').add(new Option(n.ssid,n.ssid));return}await new Promise(r=>setTimeout(r,800))}}
+async function saveWifi(){if(!$('ssid').value)return msg('wmsg','pick a network',0);
+ const r=await api('/api/wifi',{ssid:$('ssid').value,pass:$('pass').value});
+ msg('wmsg',r.ok?'saved - connecting… the face shows its new IP when connected':(r.error||'failed'),r.ok)}
+async function saveTz(){const r=await api('/api/tz',{tz:$('tz').value});msg('tmsg',r.ok?'saved':'failed',r.ok)}
+// Browser time zone -> POSIX TZ string (what the ESP32 understands), derived from this year's transitions.
+function posixTz(){const y=new Date().getFullYear(),off=t=>-new Date(t).getTimezoneOffset();
+ const nm=m=>{const a=Math.abs(m);return'<'+(m<0?'-':'+')+String(a/60|0).padStart(2,'0')+(a%60?String(a%60).padStart(2,'0'):'')+'>'};
+ const fo=m=>{const a=Math.abs(m);return(m>0?'-':'')+(a/60|0)+(a%60?':'+String(a%60).padStart(2,'0'):'')};
+ const tr=[];let p=off(Date.UTC(y,0,1));
+ for(let t=Date.UTC(y,0,1);t<Date.UTC(y+1,0,1);t+=36e5){const o=off(t);if(o!==p){let lo=t-36e5,hi=t;
+  while(hi-lo>6e4){const m=(lo+hi)/2;off(m)===p?lo=m:hi=m}tr.push({t:hi,from:p,to:o});p=o}}
+ if(tr.length<2)return nm(p)+fo(p);
+ const on=tr.find(x=>x.to>x.from),of=tr.find(x=>x.to<x.from);
+ const rule=x=>{const l=new Date(x.t+x.from*6e4),mo=l.getUTCMonth()+1,d=l.getUTCDate(),
+  last=new Date(Date.UTC(y,mo,0)).getUTCDate(),w=d+7>last?5:Math.ceil(d/7),mins=l.getUTCHours()*60+l.getUTCMinutes();
+  return'M'+mo+'.'+w+'.'+l.getUTCDay()+(mins===120?'':'/'+(mins/60|0)+(mins%60?':'+String(mins%60).padStart(2,'0'):''))};
+ return nm(on.from)+fo(on.from)+nm(on.to)+(on.to-on.from===60?'':fo(on.to))+','+rule(on)+','+rule(of)}
+$('tz').value=posixTz();$('tzname').textContent='from this browser: '+Intl.DateTimeFormat().resolvedOptions().timeZone;
+async function poll(){try{const s=(await api('/api/msg',{get:'state'})).state,i=await api('/api/info');
+ $('st').textContent=`feeling ${s.face} · ${s.idle}`+(s.pomodoro?` · pomodoro ${s.pomodoro/60|0} min`:'')+(s.suggest?` · wants to play ${s.suggest}`:'');
+ $('cur').textContent=i.ip?`connected to ${i.ssid} (${i.ip})`:i.ssid?`trying ${i.ssid}…`:'not set up yet';
+}
+ catch(e){$('st').textContent='offline'}}
+// Settings card, generated from the device's own list of settings (types, ranges, options, help).
+// Short names for the settings rows (the help sentence from the device shows under each row as a note).
+const SET_LABEL={
+ personality:'Personality',
+ sensitivity:'Sensitivity',
+ recovery:'Mood recovery',
+ brightness:'Brightness',
+ night_dim:'Dim at night',
+ sleep_after:'Doze after (min)',
+ night_sleep:'Doze at night quickly',
+ clock_24h:'24-hour clock',
+ temp_unit:'Temperature unit',
+ behaviours:'Idle antics',
+ learner:'Mind net drives the face',
+ panels:'Corner panels',
+ auto_emotes:'Emotes',
+ squash_amt:'Squash and stretch',
+ motion_amt:'Idle drift',
+ gaze_amt:'Glances around',
+ wake_up:'Wake up at power-on',
+ head_turn:'Head turn (3D)',
+ fisheye:'Fisheye lens',
+ wardrobe:'Changes its look',
+ look_chance:'Look change chance',
+ look_whole:'Whole look changes',
+ drift:'Temperament drift',
+ mind_amount:'Mind net strength',
+ learn_rate:'Learning speed',
+ explore:'Experimenting',
+ motion:'Motion sensor',
+ motion_sens:'Motion sensitivity',
+ auto_rotate:'Flip when upside down',
+ screen_off:'Screen off after (min)',
+ hearing:'Hear sounds',
+ hearing_sens:'Hearing sensitivity',
+ sound:'Voice',
+ volume:'Voice volume',
+ level:'Keep face level',
+ parallax:'Tilt movement',
+ r_pet:'Pet',
+ r_praise:'Praise',
+ r_love:'Love',
+ r_greet:'Greet',
+ r_poke:'Poke',
+ r_annoy:'Annoy',
+ r_scold:'Scold',
+ w_pet:'Pet',
+ w_poke:'Poke',
+ w_praise:'Praise',
+ w_scold:'Scold',
+ w_startle:'Startle',
+ w_win:'Win',
+ w_fail:'Fail',
+ w_greet:'Greet',
+ w_tired:'Tired',
+ w_annoy:'Annoy',
+ w_love:'Love',
+ w_confuse:'Confuse',
+ w_bore:'Bore',
+ x_neutral:'Neutral',
+ x_happy:'Happy',
+ x_sad:'Sad',
+ x_angry:'Angry',
+ x_surprised:'Surprised',
+ x_sleepy:'Sleepy',
+ x_excited:'Excited',
+ x_content:'Content',
+ x_scared:'Scared',
+ x_bored:'Bored',
+ x_skeptical:'Skeptical',
+ x_confused:'Confused',
+ x_smug:'Smug'};
+async function settings(){const j=await api('/api/msg',{get:'settings'}),box=$('sets');box.innerHTML='';
+ const groups={},titles={general:'General',events:'Event weights',expressions:'Expression weights',motion:'Motion',sensor:'Motion sensor',sound:'Sound and hearing',learner:'Mind net and learning'};
+ const section=g=>groups[g]||(groups[g]=group(box,titles[g]||g,g==='general'));
+ for(const m of j.meta)section(m.group||'general').append(optRow(SET_LABEL[m.key]||cap(m.key.replace(/_/g,' ')),m.type==='float'||m.type==='int'?m.type:m.type,m,j.settings[m.key],val=>api('/api/msg',{settings:{[m.key]:val}}),cap(m.help)))}
+// Diary card: counts per day and the mood by hour ({"get":"diary"}).
+async function diary(){const j=(await api('/api/msg',{get:'diary'})).diary,box=$('diarydays');if(!j)return;box.innerHTML='';
+ if(!j.days.length){box.textContent='nothing yet';return}
+ j.days.forEach(d=>{const age=j.today-d.id,row=document.createElement('div');row.className='brow';
+  const counts=d.n.map((v,i)=>v?j.kinds[i]+' '+v:'').filter(Boolean).join(', ')||'quiet day';
+  const cells=d.mood.map((v,h)=>`<i title="${String(h).padStart(2,'0')}:00 ${v==null?'no data':v}" style="background:${v==null?'#2f2733':v>=0?`rgba(95,211,141,${.25+v/130})`:`rgba(224,122,95,${.25-v/130})`}"></i>`).join('');
+  row.innerHTML=`<b>${age==0?'Today':age==1?'Yesterday':age+' days ago'}</b> <span class="muted">${counts}</span><div class="hours">${cells}</div>`;box.appendChild(row)})}
+// Mind net card: the urges (bars), their strongest causes, and what it has learned from you ({"get":"brain"}).
+const sg=v=>(v>0?'+':'')+v;
+let MI=null,MS=null,MT=0;
+async function moodInfo(){const m=(await api('/api/msg',{get:'mood'})).mood;if(!m)return;const lk=(await api('/api/msg',{get:'tastes'})).tastes||'';const sg2=v=>(v>=0?'+':'')+v.toFixed(2),bars=(o)=>Object.entries(o).map(([k,v])=>`<div class="opt"><div class="top"><span>${k}</span><span class="val">${v.toFixed(2)}</span></div><div class="bar" style="margin:6px 0 0"><i style="left:0;width:${Math.min(v,1)*100}%;background:var(--acc)"></i></div></div>`).join('');
+ const sc=a=>a.length?a.map(x=>x[0]+' '+sg2(x[1])).join(', '):'nothing yet';
+ $('moodbox').innerHTML=(lk?`<div class="muted">It ${lk}.</div>`:'')+`<div class="muted">Temperament (slow drift from how it is treated): mood ${sg2(m.temper.v)}, energy ${sg2(m.temper.a)}${m.temper.drift?'':' (drift off)'}</div>`+bars(m.needs)+
+ `<div class="muted" style="margin-top:10px">Wardrobe ${m.wardrobe.on?'on':'off (cfg wardrobe 1)'}: wearing ${m.wardrobe.look}, mouth ${m.wardrobe.mouth}</div><div class="muted">Looks it has an opinion about: ${sc(m.wardrobe.scores)}</div><div class="muted">Mouths: ${sc(m.wardrobe.mouths)}</div>`}
+// The mind net as a living graph: nodes follow the latest sample, easing between samples.
+function graph(){const cv=$('graph');if(!cv||!MI||!$('t-insight').classList.contains('on'))return;const dpr=window.devicePixelRatio||1,cw=cv.clientWidth,ch=cv.clientHeight;
+ if(cv.width!==(cw*dpr|0)){cv.width=cw*dpr|0;cv.height=ch*dpr|0}const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,cw,ch);
+ const nS=MI.senses.length,nU=MI.names.length,nI=MI.inner.length,k=Math.min(1,(performance.now()-MT)/700);
+ const sv=MI.x.map((v,i)=>MS?MS.x[i]+(v-MS.x[i])*k:v),iv=MI.inner.map((v,i)=>MS?MS.inner[i]+(v-MS.inner[i])*k:v),uv=MI.urges.map((v,i)=>MS?MS.urges[i]+(v-MS.urges[i])*k:v);
+ const xs=14,xi=cw*0.5,xu=cw-90,pad=14,sy=i=>pad+(ch-2*pad)*(i+0.5)/nS,uy=u=>pad+(ch-2*pad)*(u+0.5)/nU,ix=j=>xi-34+(j%4)*22,iy=j=>ch/2-120+((j/4)|0)*30+15;
+ const col=(v,a)=>v>=0?`rgba(95,211,141,${a})`:`rgba(224,122,95,${a})`;
+ for(let u=0;u<nU;u++)for(const[n,a]of MI.why[u]){g.lineWidth=Math.min(Math.abs(a),1.5)*2+0.3;g.strokeStyle=col(a,0.35);g.beginPath();const si=MI.senses.indexOf(n);
+  if(si>=0){g.moveTo(xs,sy(si));g.bezierCurveTo(xi,sy(si),xi,uy(u),xu,uy(u))}else if(n==='inner state'){for(let j=0;j<nI;j+=5){g.moveTo(ix(j)+6,iy(j));g.lineTo(xu,uy(u))}}else continue;g.stroke()}
+ const node=(x,y,v,r0)=>{g.fillStyle=col(v,0.9);g.beginPath();g.arc(x,y,r0+Math.min(Math.abs(v),1)*4,0,6.2832);g.fill()};
+ for(let i=0;i<nS;i++)node(xs,sy(i),sv[i],2);for(let j=0;j<nI;j++)node(ix(j),iy(j),iv[j],3);
+ g.font='11px system-ui,sans-serif';g.textBaseline='middle';for(let u=0;u<nU;u++){node(xu,uy(u),uv[u],3);g.fillStyle='#f4ecf1';g.fillText(MI.names[u],xu+14,uy(u))}
+ g.fillStyle='#a99dab';for(let i=0;i<nS;i++)if(Math.abs(sv[i])>0.35)g.fillText(MI.senses[i],xs+10,sy(i))}
+setInterval(graph,66);
+async function brain(){const j=(await api('/api/msg',{get:'brain'})).brain;if(!j)return;MS=MI;MI=j;MT=performance.now();
+ $('braininfo').textContent=`${j.updates} reactions learned from - inner activity ${j.activity}`;
+ const box=$('brainurges');box.innerHTML='';
+ j.names.forEach((n,i)=>{const v=j.urges[i],row=document.createElement('div');row.className='brow';
+  row.innerHTML=`<b>${n}</b><span class="bar"><i style="${v<0?'right':'left'}:50%;width:${Math.abs(v)*50}%;background:${v<0?'#e07a5f':'#5fd38d'}"></i></span><span>${v.toFixed(2)}</span>
+  <div class="muted">${j.help[i]}. Because ${j.why[i].map(w=>w[0]+' '+sg(w[1])).join(', ')}${j.learned[i].length?'. Learned: '+j.learned[i].map(w=>w[0]+' '+sg(w[1])).join(', '):''}</div>`;
+  box.appendChild(row)});
+ $('brainsenses').textContent=j.senses.map((s,i)=>Math.abs(j.x[i])>=0.05?s+' '+j.x[i].toFixed(2):'').filter(Boolean).join('  ')}
+// Apps: list, run, edit and save Lua apps (/api/app/<name> holds the script text).
+async function appReq(path,method,body){for(;;){const r=await fetch(path,{method,headers:{'X-Teevee-Token':tok},body});
+ if(r.status!==401)return r;await login()}}
+const APP_TEMPLATE=`function draw()
+  gfx.clear(0x101820)
+  gfx.text("My app", 160, 120, 0xffffff, 2, "c")
+end
+`;
+async function apps(){const j=await api('/api/msg',{get:'apps'}),box=$('applist');box.innerHTML='';
+ $('appinfo').textContent=`${j.apps.length} app(s), ${(j.free/1024|0)} KB free in flash`+(j.sdok?`, ${j.sdfree} MB free on the SD card`:'')+(j.running?` - running: ${j.running}`:'')+(j.bgerr?` - background app stopped: ${j.bgerr}`:'');$('sdsave').style.display=j.sdok?'':'none';
+ for(const n of j.apps){const d=document.createElement('div');d.style.margin='6px 0';
+  const b=(l,fn)=>{const x=document.createElement('button');x.textContent=l;x.onclick=fn;return x};
+  d.append(n+(j.sd.includes(n)?' [SD]':'')+(n===j.running?' (running) ':' ')+(n===j.bg?'(in the background) ':''),b(n===j.running?'restart':'run',async()=>{await api('/api/msg',{app:n});apps()}),
+   b(n===j.bg?'stop background':'background',async()=>{await api('/api/msg',{background:n===j.bg?'off':n});apps()}));
+  if(n===j.running)d.append(b('stop',async()=>{await api('/api/msg',{app:'stop'});apps()}));
+  d.append(b('edit',async()=>{const r=await appReq('/api/app/'+n,'GET');$('appname').value=n;$('appsrc').value=await r.text();msg('appmsg','loaded '+n,1)}),
+   b('delete',async()=>{if(confirm('Delete '+n+'?')){await api('/api/msg',{app_del:n});apps()}}));box.appendChild(d)}
+ if(!j.apps.length)box.textContent='No apps yet: write one below, or upload a .lua file.'}
+async function appSave(run,sd){const name=$('appname').value.trim().toLowerCase(),src=$('appsrc').value;
+ if(!/^[a-z0-9_-]{1,11}$/.test(name))return msg('appmsg','name: 1-11 characters a-z 0-9 _ -',0);
+ if(!src.trim())return msg('appmsg','write some Lua first',0);
+ const r=await appReq((sd?'/api/sdapp/':'/api/app/')+name,'POST',src),j=await r.json();
+ if(!j.ok)return msg('appmsg',j.error||'could not save',0);
+ msg('appmsg','saved '+name+(sd?' on the SD card':''),1);if(run)await api('/api/msg',{app:name});apps()}
+$('appfile').onchange=async e=>{const f=e.target.files[0];if(!f)return;$('appsrc').value=await f.text();
+ $('appname').value=f.name.replace(/\.lua$/,'').toLowerCase().replace(/[^a-z0-9_-]/g,'_').slice(0,11);msg('appmsg','loaded '+f.name,1)};
+$('appsrc').value=APP_TEMPLATE;
+async function packOut(all){msg('packmsg','preparing...',1);const r=await appReq(all?'/api/exportall':'/api/export','GET');
+ if(!r.ok){let j={};try{j=await r.json()}catch(e){}return msg('packmsg',j.error||'could not save',0)}
+ const a=document.createElement('a');a.href=URL.createObjectURL(await r.blob());a.download=all?'teevee-backup.tvpack':'teevee.tvpack';a.click();msg('packmsg','saved',1)}
+async function packIn(){const f=$('packfile').files[0];if(!f)return msg('packmsg','choose a .tvpack file first',0);const all=$('packall').checked;
+ if(all&&!confirm('Replace what it has learned with what is in this file? This cannot be undone.'))return;
+ msg('packmsg','installing...',1);try{const r=await appReq(all?'/api/packall':'/api/pack','POST',f),j=await r.json();msg('packmsg',j.report||j.error||'done',!!j.ok);if(j.ok)apps()}catch(e){msg('packmsg','the board refused it: too big for its memory, or not a pack. A big pack can go on the card instead.',0)}}
+async function sdFw(){if(!confirm('Install /teevee/update/firmware.bin from the SD card and restart?'))return;msg('fwmsg','installing...',1);
+ const j=await api('/api/msg',{sd_update:true});if(j.error)msg('fwmsg',j.error,0)}
+async function dlog(){const j=await api('/api/msg',{get:'diarylog'}),d=(j.log||[]).slice(-30);$('dlogbox').style.display=d.length?'':'none';if(!d.length)return;
+ const top=Math.max(1,...d.map(r=>r[1]+r[2])),w=100/30;let s='';d.forEach((r,i)=>{const k=r[1]/top*60,h=r[2]/top*60;
+ s+=`<rect x="${i*w}" y="${60-k}" width="${w*.8}" height="${k}" fill="var(--ok)"/><rect x="${i*w}" y="${60-k-h}" width="${w*.8}" height="${h}" fill="var(--bad)"/>`});
+ $('dlog').innerHTML=`<svg viewBox="0 0 100 60" preserveAspectRatio="none" style="width:100%;height:120px;display:block">${s}</svg>`}
+async function store(){const j=await api('/api/msg',{get:'apps'}),box=$('storebox');box.style.display=j.sdok?'':'none';$('sdfw').style.display=j.sdok?'':'none';if(!j.sdok)return;
+ const l=(await api('/api/msg',{get:'store'})).store||[];btns('store',l,async n=>{const r=await api('/api/msg',{store_install:n});msg('storemsg',r.ok?n+' installed':'could not install '+n,r.ok);if(r.ok)apps()})}
+function theme(t){document.documentElement.dataset.t=t;try{localStorage.tvTheme=t}catch(e){}}
+try{if(localStorage.tvTheme)theme(localStorage.tvTheme)}catch(e){}
+// Firmware update: stream the .bin to /api/ota (XHR for upload progress), then wait for the reboot.
+function upload(){const f=$('fw').files[0];if(!f)return msg('fwmsg','choose a firmware .bin first',0);
+ const x=new XMLHttpRequest();x.open('POST','/api/ota');x.setRequestHeader('X-Teevee-Token',tok);
+ x.upload.onprogress=e=>{if(e.lengthComputable)msg('fwmsg',`uploading ${Math.round(e.loaded*100/e.total)}%`,1)};
+ x.onload=async()=>{if(x.status===401){await login();return upload()}let j={};try{j=JSON.parse(x.responseText)}catch(e){}
+  if(!j.ok)return msg('fwmsg',j.error||'failed',0);msg('fwmsg','installed - rebooting…',1);
+  // wait until it answers from the other slot (the old firmware replies for a moment before restarting)
+  for(let i=0;i<60;i++){await new Promise(r=>setTimeout(r,1000));try{const k=await api('/api/info');
+   if(k.slot&&k.slot!==fwSlot){fwSlot=k.slot;msg('fwmsg',`updated: build ${k.build} (${k.slot})`,1);
+    $('fwinfo').textContent=`build ${k.build} · slot ${k.slot}`;return}}catch(e){}}msg('fwmsg','no answer yet - check the screen',0)};
+ x.onerror=()=>msg('fwmsg','upload failed',0);x.send(f)}
+let fwSlot='';api('/api/info').then(i=>{fwSlot=i.slot;$('fwinfo').textContent=`build ${i.build} · slot ${i.slot}`}).catch(()=>{});
+// Look card, generated from the device's list of style options. Presets reload it (they change many options).
+const hex=c=>'#'+c.map(v=>v.toString(16).padStart(2,'0')).join('');
+// Rows of the Look and Settings tabs: a name and its value on one line, the control below (switches and selects sit on the line).
+const cap=t=>t.charAt(0).toUpperCase()+t.slice(1);
+function optRow(name,type,m,v,send,note){const row=document.createElement('div');row.className='opt';const top=document.createElement('div');top.className='top';
+ const n=document.createElement('span');n.textContent=name;top.append(n);let after=null;
+ if(type==='bool'){const c=document.createElement('input');c.type='checkbox';c.className='sw';c.checked=!!v;c.onchange=()=>send(c.checked?1:0);top.append(c)}
+ else if(type==='rgb'){const c=document.createElement('input');c.type='color';c.value=hex(v);c.oninput=()=>send([1,3,5].map(i=>parseInt(c.value.substr(i,2),16)));top.append(c)}
+ else if(type==='enum'){const c=document.createElement('select');for(const o of m.options.split('|')){const op=document.createElement('option');op.value=o;op.textContent=cap(o);op.selected=o===v;c.appendChild(op)}
+  c.onchange=()=>send(c.value);top.append(c)}
+ else{const val=document.createElement('span');val.className='val';val.textContent=v;top.append(val);const r=document.createElement('input');r.type='range';r.min=m.min;r.max=m.max;
+  r.step=type==='int'?1:m.max-m.min>20?1:m.max-m.min>=8?0.5:(m.max-m.min)/100;r.value=v;if(m.key==='hue')r.id='hue';let t;
+  r.oninput=()=>{val.textContent=r.value;clearTimeout(t);t=setTimeout(()=>send(+r.value),120)};after=r}
+ row.append(top);if(after)row.append(after);if(note){const sm=document.createElement('small');sm.textContent=note;row.append(sm)}return row}
+function group(box,title,open){const d=document.createElement('details');d.className='group';d.open=open;const s=document.createElement('summary');s.textContent=title;
+ const body=document.createElement('div');body.className='body';d.append(s,body);box.append(d);return body}
+const LOOK_GROUPS=[['Colour',['hue','sat','val','bg','tint','daytint'],1],['Eyes',['eye','eye_split','eye_r','eye_w','eye_h','eye_w_r','eye_h_r','lid_r','hue_r','brows_r','round','eye_gap','eye_y','lid','lashes','brows','blush'],1],
+ ['Pupils',['pupil','pupil_r','pupil_ink','pupil_size','glint'],0],['Mouth',['mouth','mouth_solid','mouth_w','mouth_y','line'],0],['Motion',['speed','bounce'],0],['Effects',['glow','pixel','glitch','split'],0]];
+const LOOK_LABEL={hue:'Colour',sat:'Colour strength',val:'Brightness',bg:'Background',tint:'Colour follows mood',daytint:'Colour follows the time of day',eye_w:'Eye width',
+ eye_h:'Eye height',round:'Eye roundness',eye_gap:'Eye spacing',eye_y:'Eye position',lid:'Sleepy eyelids',lashes:'Eyelashes',brows:'Eyebrows',blush:'Blush',glow:'Glow',
+ eye:'Eye style',eye_split:'Own settings for the right eye',eye_r:'Right eye style',pupil_r:'Right eye pupil',eye_w_r:'Right eye width',eye_h_r:'Right eye height',lid_r:'Right eye lid',hue_r:'Right eye colour shift',brows_r:'Right eye brow',pupil_ink:'Pupil colour',pupil:'Pupil shape',pupil_size:'Pupil size',glint:'White glint',mouth:'Mouth style',mouth_solid:'Solid mouth',mouth_w:'Mouth width',mouth_y:'Mouth position',line:'Line thickness',tongue:'Tongue',
+ speed:'Motion speed',bounce:'Bounciness',pixel:'Pixelate',glitch:'Glitch',split:'RGB split'};
+const LOOK_NOTE={pixel:'Block size in pixels; 0 is off.',split:'Red slides left and blue right, like 3D glasses; 0 is off.',glitch:'0 is off; 1 an occasional slip, 10 constant chaos. The mind net can raise it.',daytint:'Warm at dusk, cool and dim at night.',eye:'Solid, outline, bars, dots, spiral, sparkle, cross. The pupil has its own setting.',eye_split:'Off: both eyes match. On: the right eye uses its own options.',pupil_r:'Shape inside the right eye (when its own settings are on).',pupil:'Cross, diamond, moon are new; outline makes hollow eyes; none hides the pupil.',glow:'A soft halo behind the whole face; 0 is off.'};
+async function looks(){const j=await api('/api/msg',{get:'looks'});$('lkbox').style.display=j.sdok?'':'none';if(!j.sdok)return;const box=$('savedlooks');box.innerHTML='';
+ for(const n of j.looks){const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=async()=>{await api('/api/msg',{look_load:n});look()};
+  const x=document.createElement('span');x.textContent=' \u00d7';x.style.color='var(--dim)';x.onclick=async e=>{e.stopPropagation();if(confirm('Delete the look '+n+'?')){await api('/api/msg',{look_del:n});looks()}};b.append(x);box.append(b)}
+ if(!j.looks.length)box.textContent='none yet: name this look and save it'}
+async function lookSave(){const n=$('lkname').value.trim().toLowerCase();if(!/^[a-z0-9_-]{1,11}$/.test(n))return alert('name: 1-11 characters a-z 0-9 _ -');
+ await api('/api/msg',{look_save:n});$('lkname').value='';looks()}
+async function look(){looks();const j=await api('/api/msg',{get:'style'}),box=$('look');box.innerHTML='';
+ btns('presets',['random','random all','season','winter','spring','summer','autumn','halloween','newyear',...j.presets],async n=>{await api('/api/msg',{style:n});look()});[...$('presets').children].forEach(b=>b.classList.toggle('sel',b.textContent===j.preset));
+ const timers={},send=k=>v=>{clearTimeout(timers[k]);timers[k]=setTimeout(()=>api('/api/msg',{style:{[k]:v}}),100)},by={};for(const m of j.meta)by[m.key]=m;
+ const used=new Set();for(const[title,keys,open]of LOOK_GROUPS){const body=group(box,title,open);
+  for(const k of keys)if(by[k]){const m=by[k];used.add(k);body.append(optRow(LOOK_LABEL[k]||cap(m.help),m.type,m,j.style[k],send(k),LOOK_NOTE[k]))}}
+ const rest=j.meta.filter(m=>!used.has(m.key));if(rest.length){const body=group(box,'More',0);for(const m of rest)body.append(optRow(cap(m.help),m.type,m,j.style[m.key],send(m.key)))}}
+// Studio: custom expressions, emotes and the event -> emote map ({"get":"custom"}).
+const opts=(sel,list,cur)=>{sel.innerHTML='';for(const o of list){const e=document.createElement('option');e.textContent=o;e.selected=o===cur;sel.appendChild(e)}};
+const btn=(label,fn)=>{const b=document.createElement('button');b.textContent=label;b.onclick=fn;return b};
+let C=null,ft={};
+async function studio(){C=await api('/api/msg',{get:'custom'});const faces=[...C.builtin_faces,...C.faces.map(f=>f.name)];
+ opts($('from'),faces,$('from').value||'neutral');opts($('eface'),faces,$('eface').value||'happy');
+ opts($('eeyes'),C.eyes,$('eeyes').value||'none');opts($('edeco'),C.decos,$('edeco').value||'none');
+ const fb=$('fields');fb.innerHTML='';for(const f of C.fields){const l=document.createElement('div'),r=document.createElement('input');
+  l.className='muted';r.type='range';r.min=f.min;r.max=f.max;r.step=0.01;r.value=f.value;
+  const show=()=>l.textContent=`${f.name}: ${(+r.value).toFixed(2)}`;show();
+  r.oninput=()=>{show();clearTimeout(ft[f.name]);ft[f.name]=setTimeout(()=>api('/api/msg',{face:{[f.name]:+r.value}}),80)};fb.append(l,r)}
+ const pad=$('fpad');if(!pad.childElementCount)for(const k of['valence','arousal','dominance']){const l=document.createElement('div'),r=document.createElement('input');
+  r.type='range';r.min=-1;r.max=1;r.step=0.05;r.value=0;r.id='pad_'+k[0];const show=()=>l.textContent=`mood ${k}: ${r.value}`;show();r.oninput=show;pad.append(l,r)}
+ const mf=$('myfaces');mf.innerHTML='';for(const f of C.faces){const d=document.createElement('div');d.textContent=f.name+(f.mood?' (in moods) ':' ');
+  d.append(btn('show',()=>api('/api/msg',{show:f.name,ttl:6})),btn('delete',async()=>{await api('/api/msg',{face_del:f.name});studio()}));mf.appendChild(d)}
+ const me=$('myemotes');me.innerHTML='';for(const e of C.emotes){const d=document.createElement('div');d.textContent=`${e.name} (${e.face}, ${e.eyes}, ${e.deco}${e.text?' "'+e.text+'"':''}) `;
+  d.append(btn('play',()=>api('/api/msg',{emote:e.name})),btn('delete',async()=>{await api('/api/msg',{emote_del:e.name});studio()}));me.appendChild(d)}
+ const all=['auto','none',...C.builtin_emotes,...C.emotes.map(e=>e.name)],ev=$('evmap');ev.innerHTML='';
+ for(const k in C.map){const row=document.createElement('div');row.className='row';const l=document.createElement('span');l.textContent=k;
+  const s=document.createElement('select');opts(s,all,C.map[k]);s.onchange=()=>api('/api/msg',{map:{[k]:s.value}});row.append(l,s);ev.appendChild(row)}}
+async function studioFrom(){await api('/api/msg',{face:{from:$('from').value}});studio()}
+async function faceSave(){const r=await api('/api/msg',{face_save:{name:$('fname').value.trim().toLowerCase(),mood:$('fmood').checked,
+ pad:['v','a','d'].map(k=>+$('pad_'+k).value)}});msg('smsg',r.ok?'saved':'could not save (name a-z 0-9 _ -, not a built-in, max 8)',r.ok);studio()}
+async function emoteSave(){const name=$('ename').value.trim().toLowerCase();const r=await api('/api/msg',{emote_save:{name,face:$('eface').value,
+ eyes:$('eeyes').value,deco:$('etext').value?'text':$('edeco').value,text:$('etext').value,ms:+$('ems').value,wobble:+$('ewob').value}});
+ msg('emsg',r.ok?'saved':'could not save (name a-z 0-9 _ -, not a built-in, max 8)',r.ok);if(r.ok){api('/api/msg',{emote:name});studio()}}
+const sl=(id,lab,fmt)=>{const f=()=>$(lab).textContent=fmt($(id).value);$(id).oninput=f;f()};
+sl('ems','emsl',v=>`duration: ${(v/1000).toFixed(1)} s`);sl('ewob','ewl',v=>`wobble: ${v}`);
+// Tabs: one section at a time; the Insight tab refreshes itself while it is open.
+let itm=null;const TABS=['play','look','studio','apps','settings','insight','setup'];
+function showTab(n){if(!TABS.includes(n))n='play';document.querySelectorAll('nav.tabs button').forEach(b=>{const on=b.dataset.tab===n;b.setAttribute('aria-selected',on);if(on&&b.scrollIntoView)b.scrollIntoView({inline:'center',block:'nearest'})});
+ document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('on',p.id==='t-'+n));try{history.replaceState(null,'','#'+n)}catch(e){}
+ clearInterval(itm);if(n==='apps')store();if(n==='insight'){dlog();diary();brain();moodInfo();itm=setInterval(()=>{diary();brain();moodInfo()},1200)}window.scrollTo(0,0)}
+document.querySelectorAll('nav.tabs button').forEach(b=>b.onclick=()=>showTab(b.dataset.tab));addEventListener('hashchange',()=>showTab(location.hash.slice(1)));
+showTab(location.hash.slice(1)||(location.hostname.startsWith('192.168.4.')?'setup':'play'));
+poll();setInterval(poll,2000);scan();settings();look();studio();apps();
+</script></body></html>

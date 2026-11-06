@@ -1,0 +1,8 @@
+{
+  "name": "lua",
+  "version": "5.4.9",
+  "description": "Lua 5.4.9 (MIT), vendored for Teevee apps. Only the core and the base, coroutine, table, string and math libraries; no io, os, debug, utf8 or module loading. Built with LUA_32BITS (32-bit integers and floats) set in platformio.ini. One patch to upstream: luaconf.h lets -DLUA_32BITS take effect (marked TEEVEE PATCH).",
+  "build": {
+    "flags": ["-Os", "-Wno-implicit-fallthrough"]
+  }
+}

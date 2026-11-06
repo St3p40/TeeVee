@@ -1,0 +1,87 @@
+# On every push and pull request: the host tests (also under AddressSanitizer / UBSan) and the firmware for both boards.
+# The firmware .bin files are on the run's page under "Artifacts" (teevee-firmware); on a v* tag they are also attached to the release
+# (the same release desktop.yml fills). A .bin is the app image: flash it at 0x10000, or upload it on the board's web page (Firmware: Update firmware).
+# Nothing private is needed: Wi-Fi details and the web PIN are set on the board itself, never built in.
+name: checks
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # only used to attach the firmware to a release on a tag
+
+jobs:
+  host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Host tests
+        run: |
+          make -C test clean   # build from the sources (a stale test binary in the checkout would be run as it is)
+          rm -rf test/lua_obj
+          make -C test
+
+      - name: The mind net at the desktop / web size (128 inner units)
+        run: make -C test mind-big
+
+      # The frame hashes depend on the compiler's float maths and the C library (recorded on Arch: GCC 16, glibc 2.44), so a
+      # different toolchain can differ without anything being wrong: shown, but it does not fail the run. Locally it must pass.
+      - name: Renderer golden frames (information only here)
+        continue-on-error: true
+        run: make -C test golden-check
+
+      - name: Host tests under AddressSanitizer and UBSan
+        env:
+          ASAN_OPTIONS: detect_leaks=0  # app_test keeps its one picture buffer on purpose
+        run: |
+          make -C test clean
+          rm -rf test/lua_obj
+          make -C test CXX="g++ -fsanitize=address,undefined -fno-sanitize-recover=undefined" CC="gcc -fsanitize=address,undefined"
+
+  firmware:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: PlatformIO cache (the ESP32 toolchain, ~1 GB)
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build both boards
+        run: pio run -e cyd -e lilka
+
+      - name: Collect the firmware
+        run: |
+          mkdir -p out
+          cp .pio/build/cyd/firmware.bin out/teevee-cyd.bin
+          cp .pio/build/lilka/firmware.bin out/teevee-lilka.bin
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teevee-firmware
+          path: out/*.bin
+
+      - name: Attach to the release (v* tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # desktop.yml may create the release first (or not yet): create it if it is missing, then add the files
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "TeeVee $GITHUB_REF_NAME" --generate-notes || true
+          gh release upload "$GITHUB_REF_NAME" out/*.bin --repo "$GITHUB_REPOSITORY" --clobber

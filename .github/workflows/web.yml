@@ -1,0 +1,68 @@
+# Builds the browser version (web/) on every push. The page is on the run's page under "Artifacts" (teevee-web: unzip, serve the folder,
+# e.g. python3 -m http.server, and open it). Publishing it on GitHub Pages is opt-in: in the repository's settings, Pages -> Source:
+# "GitHub Actions", and a repository variable TEEVEE_PAGES = 1 (Settings -> Secrets and variables -> Actions -> Variables). Then every push
+# to the default branch, or a manual "Run workflow" on it, updates the page. The page holds no tokens or passwords: it is the face alone, running in the browser.
+name: web
+
+on:
+  push:
+    branches: ['**']
+    paths: [web/**, desktop/engine.*, desktop/platform_lcd.*, src/core/**, .github/workflows/web.yml]
+  pull_request:
+    paths: [web/**, desktop/engine.*, desktop/platform_lcd.*, src/core/**, .github/workflows/web.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Emscripten (the version the page was last built with here)
+        run: |
+          git clone --depth 1 https://github.com/emscripten-core/emsdk ~/.emsdk
+          ~/.emsdk/emsdk install 6.0.13
+          ~/.emsdk/emsdk activate 6.0.13
+
+      - name: Build
+        run: bash web/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teevee-web
+          path: web/dist
+
+      - name: Why the page is or is not published (see the run's summary)
+        env:
+          PAGES_VAR: ${{ vars.TEEVEE_PAGES }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          {
+            echo "### GitHub Pages"
+            if [ "$PAGES_VAR" != "1" ]; then echo "Not published: the repository variable TEEVEE_PAGES is not 1 (Settings > Secrets and variables > Actions > Variables)."
+            elif [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then echo "Not published: this run is on $GITHUB_REF_NAME, the page comes from $DEFAULT_BRANCH."
+            elif [ "$GITHUB_EVENT_NAME" != "push" ] && [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ]; then echo "Not published: a $GITHUB_EVENT_NAME run does not publish."
+            else echo "Publishing (Settings > Pages > Source must be GitHub Actions)."; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-pages-artifact@v3
+        if: vars.TEEVEE_PAGES == '1' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == github.event.repository.default_branch
+        with:
+          path: web/dist
+
+  pages:
+    if: vars.TEEVEE_PAGES == '1' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == github.event.repository.default_branch
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,16 @@
+# Serves the browser version of Teevee (web/dist) on port 8090. Before installing, set User= to the account that runs it and
+# WorkingDirectory= to the web/dist folder of your copy of the repository.
+[Unit]
+Description=Teevee web page (static files from web/dist)
+After=network.target
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/path/to/teevee/web/dist
+ExecStart=/usr/bin/python3 -m http.server 8090 --bind 0.0.0.0
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

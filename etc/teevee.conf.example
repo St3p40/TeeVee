@@ -1,0 +1,53 @@
+# Teevee settings applied by tools/setup.py. Empty values are skipped.
+
+[device]
+# Serial port; empty = auto-detect (/dev/ttyUSB*, /dev/ttyACM*).
+port =
+# Network address for WebSocket checks; empty = IP reported by the board.
+host =
+
+[time]
+# IANA name (Europe/Berlin) or POSIX TZ string; empty = this PC's timezone.
+timezone =
+
+[style]
+# Preset: led, round, cute, visor, ghost, classic, anime, robot, sleepy (empty = keep the board's).
+preset = sweet
+# Then any options to change on top of it (Serial `style` lists them all with current values), e.g.:
+# hue = 357           colour 0-359          sat = 0.66     val = 0.95     bg = 0 0 0
+# eye_w = 60          eye_h = 84            round = 0.43   eye_gap = 130  eye_y = 95
+# pupils = 0          pupil_size = 0.22     hollow = 0     glow = 0       lid = 0
+# lashes = 0          brows = 0             mouth = curve  (curve, cat, none)
+# mouth_w = 40        mouth_y = 192         line = 3       tongue = 0
+# blush = 1           tint = 0              speed = 1      bounce = 0.5
+
+[settings]
+# Behaviour settings (Serial `cfg` lists them all). Empty = leave as is on the board.
+# personality: cheerful, calm, grumpy, shy, hyper
+personality =
+# sensitivity (0.3-2) / recovery (0.3-3): how strongly events move it / how long feelings last
+sensitivity =
+recovery =
+# brightness 10-255; night_dim 1/0 dims to a quarter when asleep or at night
+brightness =
+night_dim =
+# sleep_after: minutes idle before dozing (0 = never); night_sleep 1/0: doze after 1 min at night
+sleep_after =
+night_sleep =
+# clock_24h 1/0; temp_unit C or F
+clock_24h =
+temp_unit =
+# behaviours: how often it does idle antics (0 = never, 1 = normal, 3 = a lot); learner 1/0
+behaviours =
+learner =
+# panels 1/0: clock / weather / CI corners
+panels =
+
+[weather]
+# Coordinates for Open-Meteo (no API key); empty = no weather panel.
+latitude =
+longitude =
+
+[ci]
+# GitHub repo for the CI panel (needs the gh CLI logged in), e.g. owner/repo; empty = none.
+repo =

@@ -1,0 +1,11 @@
+# Turn on with:  mkdir -p ~/.config/systemd/user && cp tools/teevee-selftest.* ~/.config/systemd/user/ && systemctl --user enable --now teevee-selftest.timer
+# The log: ~/.local/state/teevee/selftest.log
+[Unit]
+Description=Teevee self-test every night
+
+[Timer]
+OnCalendar=*-*-* 03:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target
