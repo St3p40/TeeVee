@@ -10,7 +10,8 @@ The same face runs in these places:
 - **ESP32 "Cheap Yellow Display"** (ESP32-2432S028R): 320 x 240 touch screen. The main board.
 - **Lilka v2** (ESP32-S3 handheld): 280 x 240 screen, buttons instead of touch.
 - **Waveshare ESP32-S3 Touch AMOLED 1.8**: 368 x 448 touch screen with a motion sensor, a microphone and a speaker. The face uses the
-  middle of the panel, and the clock and weather sit in the bands above and below it.
+  middle of the panel, and the clock, the battery and the weather sit in the bands above and below it. Its head turns with the
+  motion sensor and its own mind.
 - **Desktop** (Windows, macOS, Linux): a window with controls and a picture-in-picture mode, and it can live in the tray (`--tray`).
 - **Browser**: the face as WebAssembly, installable as an app, with every look option and a share link for your look.
 
@@ -39,7 +40,7 @@ The same face runs in these places:
 | Browser | `web/build.sh` (Emscripten), then serve `web/dist/` |
 | Tests | `make -C test` (host tests), `make -C test golden-check` (renderer pixel regression) |
 
-GitHub Actions ([`.github/workflows/`](.github/workflows/)) builds the firmware for both boards, the desktop app for all three
+GitHub Actions ([`.github/workflows/`](.github/workflows/)) builds the firmware for the three boards, the desktop app for all three
 systems and the web page, and runs the tests.
 
 The first time a board starts it opens a Wi-Fi hotspot; its name and password are on the screen. Join it and the page that opens

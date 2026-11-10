@@ -32,6 +32,7 @@ volatile int g_madctlReq = -1;
 volatile uint8_t g_madctl = LCD_MADCTL;
 volatile uint8_t g_brightness = 200;
 volatile bool g_screenOff = false;
+volatile bool g_darkMode = false;
 volatile float g_glitchDrive = 0;
 volatile float g_glitchScale = 1;
 volatile int g_parEX = 0, g_parEY = 0, g_parMX = 0, g_parMY = 0;
@@ -143,13 +144,29 @@ void loop() {
   static uint8_t brightness = 200;
   if (g_brightness != brightness) lcd.setBrightness(brightness = g_brightness);
   static bool dark = false;
+  // The whole screen again, from nothing: after the display was off (it may have lost its picture, and the AMOLED's was
+  // blacked out on purpose) and after dark mode changed (every pixel is sent differently).
+  auto repaint = [&] {
+    if (inApp) {
+      renderer.enterApp();
+      s_appRepaint = true;
+    } else {
+      renderer.setStyle(style);
+      renderer.enterFace();
+      renderer.render(spring.value(), Overlay{}, millis(), true);
+    }
+  };
   if (g_screenOff != dark) {
     lcd.setDisplayOn(!(dark = g_screenOff));
     Serial.printf("panel: %s\n", dark ? "off" : "on");
-    if (!dark) {  // the panel may have lost its picture while it was off: draw the whole face again
-      renderer.render(spring.value(), Overlay{}, millis(), true);
-      renderer.renderWidgets(g_widgets);
+    if (!dark) {
+      lcd.setBrightness(brightness);  // again, now that the panel is on: one sent while it was off may not have counted
+      repaint();
     }
+  }
+  if (g_darkMode != g_lcdSparse) {
+    g_lcdSparse = g_darkMode;
+    if (!dark) repaint();
   }
 
   const bool appMode = apps::active();

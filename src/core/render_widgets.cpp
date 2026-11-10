@@ -24,10 +24,12 @@ static void fitText(Canvas& s, const char* t, int cx, int cy, int maxW, const Bi
 }
 
 int FaceRenderer::renderWidgets(const Widgets& in) {
-  if (_cubeNow) return 0;
 #ifdef TEEVEE_BOARD_AMOLED
-  return renderMargins(in);  // the panel has room above and below the face: the info goes there, the corners stay clear
+  // The panel has room above and below the face: the info goes there, the corners stay clear. The bands are outside the face,
+  // so they are kept up to date while the head is turned too (the corner panels below are not: the turned face covers them).
+  return renderMargins(in);
 #endif
+  if (_cubeNow) return 0;
   Widgets w = in;
   if (!w.panels) {
     w.clock[0] = w.leftSub[0] = w.temp[0] = w.weather[0] = w.ciName[0] = 0;
@@ -106,6 +108,21 @@ void FaceRenderer::drawMarginStrip(Canvas& s, const Widgets& w, bool bottom, int
   if (!bottom) {
     if (w.panels) s.drawText(w.clock[0] ? w.clock : "--:--", cx, 40 - oy, FONT_LARGE, w.clock[0] ? fg : dim);
     fitText(s, w.leftSub, cx, 84 - oy, MB_W - 40, FONT_SMALL, w.pomoActive ? fg : dim);
+    if (w.battery) {
+      // The battery, top right (clear of the panel's round corner): a small cell that fills with the charge, and the number under
+      // it. Red when nearly empty; a bar beside the cell while it charges.
+      const int pct = w.battery - 1, bx = MB_W - 78, by = 22 - oy, bw = 30, bh = 14;
+      const uint16_t col = pct <= 15 && !w.charging ? Canvas::rgb(255, 40, 40) : dim;
+      s.fillRect(bx, by, bw, bh, col);
+      s.fillRect(bx + 2, by + 2, bw - 4, bh - 4, BG);
+      s.fillRect(bx + bw, by + 4, 3, bh - 8, col);
+      const int fill = (bw - 6) * pct / 100;
+      if (fill > 0) s.fillRect(bx + 3, by + 3, fill, bh - 6, pct <= 15 && !w.charging ? col : fg);
+      if (w.charging) s.fillRect(bx - 6, by + 2, 3, bh - 4, fg);
+      char t[8];
+      snprintf(t, sizeof t, "%d%%", pct);
+      s.drawText(t, bx + bw / 2, 52 - oy, FONT_SMALL, col);
+    }
   } else if (w.setup) {
     s.drawText(Canvas::textWidth("Wi-Fi setup", FONT_SMALL) <= MB_W - 40 ? "Wi-Fi setup" : "Wi-Fi", cx, 14 - oy,
                FONT_SMALL, dim);
@@ -139,7 +156,7 @@ int FaceRenderer::renderMargins(const Widgets& in) {
   }
   const Widgets& q = _marginW;
   const bool top = !_marginValid || strcmp(w.clock, q.clock) || strcmp(w.leftSub, q.leftSub) ||
-                   w.pomoActive != q.pomoActive || w.panels != q.panels;
+                   w.pomoActive != q.pomoActive || w.panels != q.panels || w.battery != q.battery || w.charging != q.charging;
   const bool bottom = !_marginValid || strcmp(w.temp, q.temp) || strcmp(w.weather, q.weather) || w.ci != q.ci ||
                       strcmp(w.ciName, q.ciName) || w.setup != q.setup || strcmp(w.apSsid, q.apSsid) ||
                       strcmp(w.apPass, q.apPass) || strcmp(w.pin, q.pin);

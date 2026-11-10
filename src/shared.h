@@ -24,6 +24,7 @@ extern volatile float
 extern volatile float g_glitchDrive;  // the mind net's wish for a picture glitch 0..1 (core 0 -> renderer)
 extern volatile bool
     g_screenOff;  // core 0: nobody has done anything for a while; core 1 turns the display off and stops drawing
+extern volatile bool g_darkMode;  // core 0: the setting `dark_mode`; core 1 hands it to the display driver and draws the screen again
 extern volatile uint8_t g_brightness;  // backlight wanted by core 0 (settings, night dim), applied by core 1
 extern Overlay g_overlay;  // current emote overlay (core 0 -> renderer)
 extern QueueHandle_t g_events;

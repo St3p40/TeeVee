@@ -52,6 +52,7 @@ struct Settings {
     bool sound;    // chirps and trills (boards with a speaker)
     float level;   // 0..1: the face stays level when it is turned round (boards with a motion sensor and the warp)
     float parallax;  // how far the eyes move with the tilt, 0 = still, 1 = normal, 2 = far
+    bool dark_mode;  // only every second pixel is lit, in a chequer pattern (the AMOLED board: darker, less power, kinder to the panel)
 };
 
 static constexpr uint32_t SETTINGS_VERSION = 3;
@@ -176,6 +177,7 @@ inline const SettingDef SETTING_DEFS[] = {
   {"volume", ST_FLOAT, offsetof(Settings, volume), 0, 1, nullptr, "how loud its voice is", "sound"},
   {"level", ST_FLOAT, offsetof(Settings, level), 0, 1, nullptr, "the face stays level when turned round (0 = off)", "sensor"},
   {"parallax", ST_FLOAT, offsetof(Settings, parallax), 0, 2, nullptr, "the eyes and mouth move with the tilt, the eyes more (3D without the turn); 0 = still", "sensor"},
+  {"dark_mode", ST_BOOL, offsetof(Settings, dark_mode), 0, 1, nullptr, "light only every second pixel (AMOLED board: darker, saves power and the panel)", "general"},
 };
 static constexpr int SETTING_COUNT = sizeof(SETTING_DEFS) / sizeof(SETTING_DEFS[0]);
 

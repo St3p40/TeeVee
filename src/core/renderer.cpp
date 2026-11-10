@@ -783,14 +783,18 @@ void FaceRenderer::renderFaceTexture(const FaceParams& p) {
   // so the same texels, and no divisions per texel.
   uint32_t colT[160];
   for (int tx = 0; tx < 160; tx++) colT[tx] = glowCol(tx * 2);
-  for (int ty = 0; ty < 120; ty++) {
-    const uint32_t rowT = glowRow(ty * 2);
-    for (int tx = 0; tx < 160; tx++) {
-      const uint16_t g = glowOn() ? _glowTab[glowRing(colT[tx] + rowT)] : BG;
-      _tex[ty * 160 + tx] =
-          (uint16_t)(g >> 8 |
-                     g << 8);  // the texture holds pixels as the strips do: byte-swapped for the panel
+  // (the texture holds pixels as the strips do: byte-swapped for the panel)
+  if (glowOn()) {
+    uint16_t glowSw[128];
+    for (int i = 0; i < 128; i++) glowSw[i] = (uint16_t)(_glowTab[i] >> 8 | _glowTab[i] << 8);
+    for (int ty = 0; ty < 120; ty++) {
+      const uint32_t rowT = glowRow(ty * 2);
+      uint16_t* t = _tex + ty * 160;
+      for (int tx = 0; tx < 160; tx++) t[tx] = glowSw[glowRing(colT[tx] + rowT)];
     }
+  } else {
+    const uint16_t bg = (uint16_t)(BG >> 8 | BG << 8);
+    for (int i = 0; i < 160 * 120; i++) _tex[i] = bg;
   }
   memset(_texBg, 0xFF,
          (160 * 120) >> 3);  // all background, until a region's drawing changes a texel
@@ -922,16 +926,31 @@ int FaceRenderer::renderWarped(const FaceParams& p) {
   const HeadView view(_turnXShown, _turnYShown, _fisheye, _rollShown);
   const bool glow = glowOn();
   const uint16_t bgSwapped = (uint16_t)(BG >> 8 | BG << 8);
+  const uint16_t* const tex = _tex;
+  const uint8_t* const texBg = _texBg;
+  // The background at screen pixel (sx, sy): the glow behind the head (glowAt, byte-swapped). Its column terms are worked out once a
+  // frame, its row term once a row, and the table is swapped once: the same arithmetic as glowStep on the same values, so the same pixels.
+  static uint32_t glowColT[APP_W];
+  uint16_t glowSw[128];
+  uint32_t glowRowT = 0;
+  int glowY = -1;
+  if (glow) {
+    for (int x = 0; x < APP_W; x++) glowColT[x] = glowCol(x);
+    for (int i = 0; i < 128; i++) glowSw[i] = (uint16_t)(_glowTab[i] >> 8 | _glowTab[i] << 8);
+  }
+  auto backdrop = [&](int sx, int sy) -> uint16_t {
+    if (!glow) return bgSwapped;
+    if (sy != glowY) glowY = sy, glowRowT = glowRow(sy);
+    return glowSw[glowRing(glowColT[min(max(sx, 0), APP_W - 1)] + glowRowT)];
+  };
   // The colour (byte-swapped, as the strips go to the panel) at face point (fu, fv), fixed point 16.16, seen at screen pixel (sx, sy)
   auto texel = [&](int32_t fu, int32_t fv, int sx, int sy) -> uint16_t {
     if (fu >= 0 && fu <= (320 << 16) && fv >= 0 && fv <= (240 << 16)) {
       const int tu = fu >> 16 > 319 ? 319 : fu >> 16, tv = fv >> 16 > 239 ? 239 : fv >> 16,
                 i = (tv >> 1) * 160 + (tu >> 1);
-      if (!(_texBg[i >> 3] >> (i & 7) & 1)) return _tex[i];
+      if (!(texBg[i >> 3] >> (i & 7) & 1)) return tex[i];
     }
-    if (!glow) return bgSwapped;
-    const uint16_t g = glowAt(min(max(sx, 0), APP_W - 1), sy);
-    return (uint16_t)(g >> 8 | g << 8);
+    return backdrop(sx, sy);
   };
   // The span ends along one row of row(sx, sy, n, ...): a span's end is the next one's start, so a row costs n / WARP_SPAN + 1
   // projections instead of two per span (a projection is a float divide: about 1 us on the board). Built again only when
@@ -982,7 +1001,18 @@ int FaceRenderer::renderWarped(const FaceParams& p) {
         continue;
       }
       int32_t fu = ends.fu[s], fv = ends.fv[s];
-      for (int j = 0; j < m; j++, fu += ends.du[s], fv += ends.dv[s]) out[i + j] = texel(fu, fv, sx + i + j, sy);
+      const int32_t du = ends.du[s], dv = ends.dv[s], fuN = fu + (m - 1) * du, fvN = fv + (m - 1) * dv;
+      // Both ends of the span on the face (the steps are linear, so every pixel between is too): no range checks or clamps per
+      // pixel, and the texel is (fv >> 17, fu >> 17), which is what texel() works out for a point on the face.
+      if (fu >= 0 && fu < (320 << 16) && fuN >= 0 && fuN < (320 << 16) && fv >= 0 && fv < (240 << 16) && fvN >= 0 &&
+          fvN < (240 << 16)) {
+        for (int j = 0; j < m; j++, fu += du, fv += dv) {
+          const int t = (fv >> 17) * 160 + (fu >> 17);
+          out[i + j] = texBg[t >> 3] >> (t & 7) & 1 ? backdrop(sx + i + j, sy) : tex[t];
+        }
+        continue;
+      }
+      for (int j = 0; j < m; j++, fu += du, fv += dv) out[i + j] = texel(fu, fv, sx + i + j, sy);
     }
   };
   // RGB split here, from the neighbouring face pixels: postProcess would see only the strip, not what lies past the screen edge
@@ -1001,16 +1031,21 @@ int FaceRenderer::renderWarped(const FaceParams& p) {
     uint16_t* out = _strip[_cur].buffer();
     for (int j = 0; N && j < h;) {  // the same blocks as postProcess (strips start on a multiple of N)
       const int rows = min(N - (y0 + j) % N, h - j), sy = y0 + j + (rows >> 1);
+      // With the RGB split every block reads three pixels of its row. In small blocks that is most of the row, and the whole row
+      // in one run (row) costs less than the pixels one at a time (at); both give the same pixel values.
+      const bool whole = d && N <= 5;
+      if (whole) row(-d, sy, w + 2 * d, wide);
       for (int i = 0; i < w;) {
         const int cols = min(N - i % N, w - i), x = i + (cols >> 1);
-        const uint16_t c = !d ? at(0, sy, w, x)
-                              : sw((uint16_t)((sw(at(-d, sy, w + 2 * d, x + 2 * d)) & 0xF800) |
-                                              (sw(at(-d, sy, w + 2 * d, x + d)) & 0x07E0) |
-                                              (sw(at(-d, sy, w + 2 * d, x)) & 0x001F)));
-        for (int y = j; y < j + rows; y++)
-          for (int k = i; k < i + cols; k++) out[y * w + k] = c;
+        const uint16_t c =
+            !d      ? at(0, sy, w, x)
+            : whole ? sw((uint16_t)((sw(wide[x + 2 * d]) & 0xF800) | (sw(wide[x + d]) & 0x07E0) | (sw(wide[x]) & 0x001F)))
+                    : sw((uint16_t)((sw(at(-d, sy, w + 2 * d, x + 2 * d)) & 0xF800) |
+                                    (sw(at(-d, sy, w + 2 * d, x + d)) & 0x07E0) | (sw(at(-d, sy, w + 2 * d, x)) & 0x001F)));
+        for (int k = i; k < i + cols; k++) out[j * w + k] = c;
         i += cols;
       }
+      for (int y = j + 1; y < j + rows; y++) memcpy(out + y * w, out + j * w, (size_t)w * sizeof(uint16_t));  // the block's other rows
       j += rows;
     }
     for (int j = 0; !N && j < h; j++) {

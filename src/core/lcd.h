@@ -7,6 +7,9 @@
 // Set while the renderer sends a whole turned frame: a panel that keeps a copy of the screen may then skip keeping it (every
 // pixel is sent anyway, and the next normal frame starts with a full fillScreen). Only the AMOLED driver reads it.
 inline bool g_lcdFullFrame = false;
+// Dark mode: only every second pixel is sent as it is, in a chequer pattern; the others go out black (an AMOLED's black pixel is off).
+// Set by the display's own core; the screen is drawn again in full after it changes. Only the AMOLED driver reads it.
+inline bool g_lcdSparse = false;
 
 class Lcd {
   public:

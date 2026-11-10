@@ -13,7 +13,7 @@ constexpr int LCD_PANEL_W = 320, LCD_CROP = 0, LCD_X_OFFSET = 0, LCD_Y_OFFSET = 
 constexpr uint8_t LCD_MADCTL = 0x00, LCD_MADCTL_FLIPPED = 0x00;  // the demo leaves the panel's default orientation
 constexpr int IIC_SDA = 15, IIC_SCL = 14, TP_INT = 21;
 constexpr int BOARD_POWER = -1;
-constexpr int BOARD_SD_CS = -1;  // the card (SDMMC) is not used yet
+constexpr int BOARD_SD_CS = -1;  // (no SPI card: the slot is on the SDMMC bus, below)
 // The speaker amplifier's enable (IO46) is held low from power-on; audio.cpp turns it on only while the voice speaks.
 constexpr int BOARD_QUIET_PINS[] = {46};
 constexpr int BOARD_BOOT_PINS[] = {0};
@@ -32,6 +32,9 @@ constexpr uint8_t AUDIO_CODEC_ADDR = 0x18;
 #define BOARD_IMU_BUILTIN 1  // motion is switched on once by default (the setting `motion`)
 // The QMI8658 is mounted turned: its x points up the screen and its z into it (measured: flat = z -1 g, upright = x +1 g).
 #define BOARD_IMU_MAP {{0, 1, 0}, {1, 0, 0}, {0, 0, -1}}
+// The power chip (an AXP2101 on the same I2C bus) measures the battery; battery.cpp only reads it.
+#define BOARD_HAS_BATTERY 1
+constexpr uint8_t BATTERY_PMU_ADDR = 0x34;
 
 #elif defined(TEEVEE_BOARD_LILKA)
 // Lilka v2: ESP32-S3 (16 MB flash, 8 MB PSRAM), ST7789 1.69" 280x240 IPS, buttons, no touch. Pins from the Lilka SDK
@@ -75,6 +78,9 @@ constexpr int BOARD_BOOT_PINS[] = {0};
 
 #ifndef BOARD_IMU_BUILTIN
 #define BOARD_IMU_BUILTIN 0
+#endif
+#ifndef BOARD_HAS_BATTERY
+#define BOARD_HAS_BATTERY 0
 #endif
 #ifndef BOARD_HAS_AUDIO
 #define BOARD_HAS_AUDIO 0

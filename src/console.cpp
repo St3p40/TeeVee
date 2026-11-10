@@ -3,6 +3,8 @@
 #include "app_runtime.h"
 #include "sdcard.h"
 #include "imu.h"
+#include "battery.h"
+#include "board.h"
 #include "audio.h"
 #include "core/motion_sim.h"
 
@@ -356,6 +358,15 @@ static void handleCommand(const String& line, const String& rawLine) {
       for (File f = dir.openNextFile(); f; f = dir.openNextFile())
         Serial.printf("  %s%s  %u\n", f.name(), f.isDirectory() ? "/" : "", (unsigned)f.size());
     }
+  } else if (line == "battery") {
+    const battery::State b = battery::read();
+    if (!BOARD_HAS_BATTERY)
+      Serial.println("battery: this board does not measure one");
+    else if (!b.answered)
+      Serial.println("battery: the power chip does not answer");
+    else
+      Serial.printf("battery: %s%u%%%s%s (chip %02X, status %02X %02X, gauge %u)\n", b.known ? "" : "none connected, reads ",
+                    b.percent, b.charging ? ", charging" : "", b.usb ? ", USB power" : "", b.chip, b.raw0, b.raw1, b.rawPct);
   } else if (line == "screen" || line == "screen on" || line == "screen off") {
     if (line == "screen on") screenIdle.activity(now);
     if (line == "screen off") screenIdle.sleepNow();

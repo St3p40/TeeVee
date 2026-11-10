@@ -137,13 +137,25 @@ void Lcd::setBrightness(uint8_t level) {
   cmd(0x51, &level, 1);
 }
 
+// Off: the picture is blacked out and the brightness goes to nothing. An AMOLED's black pixel is switched off, so this is as dark
+// as the panel's own "display off", and it uses only what is known to work on this panel (a fill and the brightness). The
+// panel's display off / on commands (0x28 / 0x29) are not used: after them the screen stayed dark.
+// On: nothing to do here. The caller sets the brightness and draws the whole screen again.
 void Lcd::setDisplayOn(bool on) {
-  wait();
-  if (on) {  // a panel that has been off is woken out of sleep first, as the start-up does (it needs 120 ms)
-    sendCommand(0x11, nullptr, 0);
-    delay(120);
-  }
-  cmd(on ? 0x29 : 0x28);
+  if (on) return;
+  const bool was = g_lcdSparse;
+  g_lcdSparse = false;
+  fillScreen(0);
+  g_lcdSparse = was;
+  const uint8_t none = 0;
+  cmd(0x51, &none, 1);
+}
+
+// Dark mode (g_lcdSparse): every second pixel of the block black, in a chequer pattern fixed to the panel. x and y are the
+// block's corner on the panel.
+static void sparse(uint16_t* p, int x, int y, int w, int h) {
+  for (int r = 0; r < h; r++, p += w)
+    for (int i = (x + y + r + 1) & 1; i < w; i += 2) p[i] = 0;
 }
 
 void Lcd::push(int x, int y, int w, int h, const uint16_t* pixels) {
@@ -151,6 +163,8 @@ void Lcd::push(int x, int y, int w, int h, const uint16_t* pixels) {
   // A turned frame sends whole strips with even edges straight from the renderer's buffer (DMA memory). The shadow copy is
   // skipped: fillScreen refills it before the next normal frame, which is the only frame that needs it.
   if (g_lcdFullFrame && s_bounce[0] && !((x | y | w | h) & 1) && x >= 0 && y >= 0 && x + w <= W && y + h <= H) {
+    // (dark mode: in the renderer's own strip, which it draws again from nothing before it is next sent)
+    if (g_lcdSparse) sparse(const_cast<uint16_t*>(pixels), x + X_OFF, y + Y_OFF, w, h);
     sendPixels(x + X_OFF, y + Y_OFF, w, h, pixels);
     return;
   }
@@ -172,12 +186,16 @@ void Lcd::push(int x, int y, int w, int h, const uint16_t* pixels) {
     uint16_t* b = s_bounce[s_next];
     s_next ^= 1;
     for (int r = 0; r < bh; r++) memcpy(b + r * aw, s_shadow + (by + r) * W + ax0, (size_t)aw * 2);
+    if (g_lcdSparse) sparse(b, ax0 + X_OFF, by + Y_OFF, aw, bh);  // (the copy of the face keeps every pixel)
     sendPixels(ax0 + X_OFF, by + Y_OFF, aw, bh, b);
   }
 }
 
 // The bands above and below the face: whole panel rows, from the same visible left edge as push() (x 0 there too).
-void Lcd::pushRows(int y, int h, const uint16_t* pixels) { sendPixels(0, y, PANEL_W, h, pixels); }
+void Lcd::pushRows(int y, int h, const uint16_t* pixels) {
+  if (g_lcdSparse) sparse(const_cast<uint16_t*>(pixels), 0, y, PANEL_W, h);  // (the band's strip is drawn again each time)
+  sendPixels(0, y, PANEL_W, h, pixels);
+}
 
 void Lcd::wait() { waitPixels(); }
 
@@ -189,6 +207,7 @@ void Lcd::fillScreen(uint16_t c) {
   if (s_shadow)
     for (int i = 0; i < W * H; i++) s_shadow[i] = s;
   for (int i = 0; i < PANEL_W * FILL_ROWS; i++) rows[i] = s;
+  if (g_lcdSparse) sparse(rows, 0, 0, PANEL_W, FILL_ROWS);  // (FILL_ROWS is even: the pattern is the same in every block)
   for (int y = 0; y < PANEL_H; y += FILL_ROWS)
     sendPixels(0, y, PANEL_W, FILL_ROWS < PANEL_H - y ? FILL_ROWS : PANEL_H - y, rows);
   waitPixels();

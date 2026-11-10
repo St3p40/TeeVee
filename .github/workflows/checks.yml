@@ -1,4 +1,4 @@
-# On every push and pull request: the host tests (also under AddressSanitizer / UBSan) and the firmware for both boards.
+# On every push and pull request: the host tests (also under AddressSanitizer / UBSan) and the firmware for the three boards.
 # The firmware .bin files are on the run's page under "Artifacts" (teevee-firmware); on a v* tag they are also attached to the release
 # (the same release desktop.yml fills). A .bin is the app image: flash it at 0x10000, or upload it on the board's web page (Firmware: Update firmware).
 # Nothing private is needed: Wi-Fi details and the web PIN are set on the board itself, never built in.
@@ -61,14 +61,15 @@ jobs:
       - name: Install PlatformIO
         run: pip install platformio
 
-      - name: Build both boards
-        run: pio run -e cyd -e lilka
+      - name: Build the three boards
+        run: pio run -e cyd -e lilka -e amoled
 
       - name: Collect the firmware
         run: |
           mkdir -p out
           cp .pio/build/cyd/firmware.bin out/teevee-cyd.bin
           cp .pio/build/lilka/firmware.bin out/teevee-lilka.bin
+          cp .pio/build/amoled/firmware.bin out/teevee-amoled.bin
           ls -l out
 
       - uses: actions/upload-artifact@v4

@@ -30,4 +30,4 @@ test/*.ppm
 test/turnmap_test
 test/appraisal_test
 test/pack_test
-
+test/head_test

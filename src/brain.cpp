@@ -2,9 +2,11 @@
 #include "sdcard.h"
 #include "portal.h"
 #include "core/appraisal.h"
+#include "core/head.h"
 #include "core/behaviour.h"
 #include "app_runtime.h"
 #include "imu.h"
+#include "battery.h"
 #include "audio.h"
 #include "core/voice.h"
 
@@ -193,6 +195,14 @@ void loadPersisted() {
     store.putBool("imu_auto", true);
   }
 #endif
+#if BOARD_IMU_BUILTIN && !defined(TEEVEE_NO_WARP)
+  // The same for the head turn, on a board that can draw it: on once (20 degrees), then the setting is the owner's.
+  if (!store.getBool("turn_auto", false)) {
+    if (settings.head_turn <= 0) settings.head_turn = 20;
+    store.putBytes("settings", &settings, sizeof settings);
+    store.putBool("turn_auto", true);
+  }
+#endif
   // A style saved by older firmware is a prefix of today's: newer options load as defaults.
   uint8_t blob[sizeof(FaceStyle)];
   size_t styleLen = store.getBytesLength("style");
@@ -345,14 +355,7 @@ static bool touchingNow = false;
 static bool buttonPetting = false;
 static float touchGX = 0, touchGY = 0;
 
-// The motion sensor's tilt (the change from rest), read by the mind step: the head turn and the lens follow it.
-struct MotionTilt {
-  float x = 0, y = 0;
-  bool carried = false, live = false;
-} motionTilt;
-
 void mindSense(MindInputs& in) {
-  motionTilt.live = false;
   MindSources src;
   src.emotion = emo.emotion();
   src.mood = emo.mood();
@@ -380,12 +383,42 @@ void mindSense(MindInputs& in) {
     src.motion = fminf(1.f, fabsf(s.last.gx) / 300.f + fabsf(s.last.gy) / 300.f + fabsf(s.last.gz) / 300.f);
     src.tiltX = s.tiltX;
     src.tiltY = s.tiltY;
-    motionTilt = {s.tiltX, s.tiltY, s.carried, true};
   }
 #endif
   if (lastHeard) src.presentAt = lastHeard;  // someone talking nearby (boards with a microphone)
   fillMindInputs(in, src, now, idle, needs, tastes);  // battery, watched and screen stay 0: desktop senses
 }
+
+// The head turn and the lens: the motion sensor and the mind net together, through HeadLife (core/head.h), which gives the head a
+// weight, a mood, boredom and turns of its own. `u` is the mind net's urges, or null with the mind net off (the sensor still turns it).
+static HeadLife headLife;
+static float headRoll = 0;  // degrees: curiosity tips the head to one side (added to the levelling roll in reactMotion)
+static void headTurn(const float* u, float dt) {
+  HeadLife::In in;
+#if BOARD_IMU_SDA >= 0  // the Lilka has no IMU
+  const imu::State s = imu::state();
+  if (s.live) in.sensor = true, in.carried = s.carried, in.tiltX = s.tiltX, in.tiltY = s.tiltY;
+#endif
+  in.asleep = idle.state(now) == IdleGen::ASLEEP;
+  in.arousal = emo.emotion().a;
+  in.sleepy = idle.sleepiness(now);
+  const float m = settings.mind_amount;
+  if (u) {
+    in.gazeX = u[mind::U_GAZE_X] * m, in.gazeY = u[mind::U_GAZE_Y] * m;
+    in.headX = u[mind::U_HEAD_X] * m, in.headY = u[mind::U_HEAD_Y] * m;
+    in.curious = u[mind::U_CURIOUS] * m;
+  }
+  const HeadLife::Out o = headLife.step(in, dt);
+  g_turnY = settings.head_turn * o.turnY;
+  g_turnX = settings.head_turn * o.turnX;
+  headRoll = settings.head_turn * o.roll;
+  g_fisheye = settings.fisheye * fminf(1.f, o.lens + (u ? lensFrom(u[mind::U_LENS] * m) : 0.f));
+  // The turned face hides the corner panels: flat while the web page's PIN must be read off the screen.
+  if (netPinShowing()) g_turnX = g_turnY = g_fisheye = headRoll = 0;
+}
+
+// True with the chance p (0..1): for what it does sometimes and not every time.
+static bool chance(float p) { return (esp_random() >> 8) / 16777216.f < p; }
 
 void mindStep() {
   static uint32_t last = 0;
@@ -398,9 +431,7 @@ void mindStep() {
     g_glitchDrive = 0;
     g_glitchScale = appraisal.glitchFor(0, idle.state(now) == IdleGen::ASLEEP, emo.emotion().a, 0).scale;
     g_pupilScale = 1.f;
-    g_turnX = 0;
-    g_turnY = 0;
-    g_fisheye = 0;
+    headTurn(nullptr, dt);
     return;
   }
   MindInputs in;
@@ -411,20 +442,7 @@ void mindStep() {
   idle.setUrges(u, settings.mind_amount);
   apps::setUrges(u);
   g_pupilScale = 1.f + 0.3f * u[mind::U_PUPIL] * settings.mind_amount;
-  // The face tilts in its plane with the mind net's look_x (a dead zone keeps it level most of the time: the turned face is slow on the board).
-  if (motionTilt.live) {
-    // The head turn and the lens follow the tilt (the change from rest): turned, the face leans that way; lifted, it stays straight.
-    const float m = motionTilt.carried ? 0.f : 1.f;
-    g_turnY = settings.head_turn * motionTilt.x * m;
-    g_turnX = settings.head_turn * motionTilt.y * m;
-    g_fisheye = settings.fisheye * fminf(1.f, hypotf(motionTilt.x, motionTilt.y)) * m;
-  } else {
-    g_turnY = settings.head_turn * tiltFrom(u[mind::U_GAZE_X] * settings.mind_amount);
-    g_turnX = settings.head_turn * tiltFrom(u[mind::U_GAZE_Y] * settings.mind_amount);
-    g_fisheye = settings.fisheye * lensFrom(u[mind::U_LENS] * settings.mind_amount);
-  }
-  // The turned face hides the corner panels: flat while the web page's PIN must be read off the screen.
-  if (netPinShowing()) g_turnX = g_turnY = g_fisheye = 0;
+  headTurn(u, dt);
   {
     const Appraisal::GlitchMix mix =
         appraisal.glitchFor(fminf(1.f, fmaxf(0.f, (u[mind::U_GLITCH] + 0.5f) * settings.mind_amount)),
@@ -965,8 +983,10 @@ void reactMotion() {
     switch (m.event) {
       case ME_KNOCK: pushEvent(EV_STARTLE, 0.3f + 0.5f * m.intensity); break;
       case ME_SHAKE:
-        pushEvent(m.intensity > 0.5f ? EV_ANNOY : EV_CONFUSE, 0.5f);
-        if (emotes) playEmote(EM_DIZZY);
+        // Shaken: dizzy more often the harder it was, less often once it is used to it; otherwise the event picks its own emote, or none.
+        pushEvent(m.intensity > 0.5f ? EV_ANNOY : EV_CONFUSE, 0.35f + 0.3f * m.intensity);
+        if (emotes && chance((0.3f + 0.6f * m.intensity) / (1.f + 0.5f * appraisal.habit(EV_CONFUSE) + 0.5f * appraisal.habit(EV_ANNOY))))
+          playEmote(EM_DIZZY);
         break;
       case ME_PICKUP: pushEvent(EV_STARTLE, 0.3f); break;
       case ME_PUTDOWN: pushEvent(EV_GREET, 0.2f); break;
@@ -980,8 +1000,7 @@ void reactMotion() {
         break;
       case ME_FACEUP: pushEvent(EV_GREET, 0.4f); break;
       case ME_UPSIDEDOWN:
-        pushEvent(EV_CONFUSE, 0.5f);
-        if (emotes) playEmote(EM_THINK);
+        pushEvent(EV_CONFUSE, 0.5f);  // (the event picks the emote: thinking, a question, a sweat drop, not the same twice running)
         if (settings.auto_rotate && !rotatedByMotion) {
           g_madctlReq = g_madctl == LCD_MADCTL ? LCD_MADCTL_FLIPPED : LCD_MADCTL;
           rotatedByMotion = true;
@@ -991,17 +1010,25 @@ void reactMotion() {
         rockRun = now - lastRock < 4000 ? rockRun + 1 : 1;
         lastRock = now;
         if (idle.state(now) != IdleGen::AWAKE) break;
-        if (rockRun <= 2)
-          pushEvent(EV_PET, 0.35f);
-        else if (rockRun == 3)
-          pushEvent(EV_TIRED, 0.5f);
-        else
-          idle.sleepNow(now);
+        {
+          // Rocking soothes. How soon it gets drowsy and drops off is not a count: it depends on how long it has been rocked, how calm
+          // it already is, and chance. Wound up, it can be rocked for a long time; calm, two or three swings may do.
+          const float a = emo.emotion().a, calm = a > 0.5f ? 0.f : a < -0.5f ? 1.f : 0.5f - a;
+          const float drowse = 0.12f * (rockRun - 1) + 0.35f * calm;
+          if (rockRun >= 3 && chance(drowse - 0.25f))
+            idle.sleepNow(now);
+          else if (chance(drowse))
+            pushEvent(EV_TIRED, 0.3f + 0.3f * calm);
+          else
+            pushEvent(EV_PET, 0.25f + 0.15f * calm);
+        }
         break;
       case ME_SPIN:
         pushEvent(EV_CONFUSE, 0.5f + 0.4f * m.intensity);
         // dizzy even over another emote (the "!" of being picked up is usually still showing)
-        if (settings.auto_emotes && idle.state(now) != IdleGen::ASLEEP) playEmote(EM_DIZZY);
+        if (settings.auto_emotes && idle.state(now) != IdleGen::ASLEEP &&
+            chance((0.45f + 0.5f * m.intensity) / (1.f + 0.4f * appraisal.habit(EV_CONFUSE))))
+          playEmote(EM_DIZZY);
         break;
       case ME_UPRIGHT:
         if (rotatedByMotion) {
@@ -1021,7 +1048,7 @@ void reactMotion() {
     idle.lookAt(s.flatX, s.flatY, now, 400);
   // Standing and turned round: the face stays level (a few degrees of slack, so it does not shiver).
   const float r = s.live ? s.roll : 0;
-  g_roll = netPinShowing() ? 0.f : settings.level * (fabsf(r) < 4.f ? 0.f : r - copysignf(4.f, r));
+  g_roll = netPinShowing() ? 0.f : settings.level * (fabsf(r) < 4.f ? 0.f : r - copysignf(4.f, r)) + headRoll;
   // The parallax: the tilt (the change from rest) moves the eyes, and half as far the mouth, so they look nearer.
   const float px = settings.parallax * 12.f;
   const bool tilted = s.live && !s.carried;
@@ -1125,6 +1152,19 @@ void publishWidgets() {
     snprintf(w.temp, sizeof w.temp, "%d%c", (int)lroundf(f ? tempC * 1.8f + 32 : tempC), f ? 'F' : 'C');
   }
   w.panels = settings.panels;
+#if BOARD_HAS_BATTERY
+  {
+    // The battery, read every 10 s (a few I2C bytes).
+    static uint32_t readAt = 0;
+    static battery::State bat;
+    if (!readAt || now - readAt >= 10000) {
+      bat = battery::read();
+      readAt = now ? now : 1;
+    }
+    if (bat.known) w.battery = bat.percent + 1, w.charging = bat.charging;
+  }
+#endif
+  g_darkMode = settings.dark_mode;
   memcpy(w.weather, weather, sizeof w.weather);
   w.ci = ci;
   memcpy(w.ciName, ciName, sizeof w.ciName);
@@ -1145,6 +1185,7 @@ void brainTask(void*) {
   now = lastLog = lastUpdate = lastState1s = millis();
   idle.begin(esp_random(), now);
   appraisal.begin(esp_random());
+  headLife.begin(esp_random());
   apps::
       begin();  // mounts the flash filesystem (and the SD card) first: the mind net and diary are files there
   loadPersisted();

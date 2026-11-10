@@ -2,7 +2,7 @@
 CXX ?= g++
 CXXFLAGS = -O1 -std=c++17 -Wall -Wextra -Wno-unused-parameter -I../src/core -I../src
 
-TESTS = proto_test portal_test settings_test style_test custom_test gesture_test motion_test mind_test look_net_test app_test pet_test turnmap_test appraisal_test pack_test mind_senses_test hearing_test voice_test
+TESTS = proto_test portal_test settings_test style_test custom_test gesture_test motion_test mind_test look_net_test app_test pet_test turnmap_test appraisal_test pack_test mind_senses_test hearing_test voice_test head_test
 
 all: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done

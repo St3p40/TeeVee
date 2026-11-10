@@ -18,4 +18,7 @@ struct Widgets {
     char apPass[12];
     char pin[5];
     bool panels;
+    // The battery (boards that measure it; drawn where there is room for it: the AMOLED's top band). 0 = not known, else percent + 1.
+    uint8_t battery;
+    bool charging;
 };
