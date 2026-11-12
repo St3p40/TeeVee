@@ -75,6 +75,14 @@ class FaceRenderer {
     void drawFullRows(const FaceParams& p, int y0, int y1);
     void drawPanel(Canvas& s, const Widgets& w, bool right, int oy) const;
     int renderWarped(const FaceParams& p);
+#ifndef TEEVEE_NO_WARP
+    // The turned face's rows, split between the two cores (renderer.cpp): the types are defined there.
+    struct WarpView;
+    struct WarpScratch;
+    struct WarpJob;
+    void warpRows(const WarpView& v, WarpScratch& s, int y0, int jFrom, int jTo, int h, uint16_t* out) const;
+    static void warpJob(void* job);
+#endif
     void renderFaceTexture(const FaceParams& p);
     float _turnXWant = 0, _turnYWant = 0, _turnXShown = 0, _turnYShown = 0, _rollWant = 0, _rollShown = 0;
     bool _bridgeShown = false;

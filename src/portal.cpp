@@ -196,7 +196,11 @@ void upFinish(HttpClient& c, bool ok, const char* why) {
     c.upPack = 0;
     char report[160], reply[200];
     bool done = false;
-    if (ok) done = brain::packInstall(LittleFS, "/pack.tmp", all, report, sizeof report);
+    if (ok) {
+      netBrainLock();
+      done = brain::packInstall(LittleFS, "/pack.tmp", all, report, sizeof report);
+      netBrainUnlock();
+    }
     LittleFS.remove("/pack.tmp");
     if (done) {
       const int k = snprintf(reply, sizeof reply, "{\"ok\":true,\"report\":\"%s\"}", report);
@@ -210,12 +214,14 @@ void upFinish(HttpClient& c, bool ok, const char* why) {
     if (ok) {
       LittleFS.remove("/behaviour.old");
       const bool had = LittleFS.rename("/behaviour.txt", "/behaviour.old");
+      netBrainLock();
       ok = LittleFS.rename("/behaviour.tmp", "/behaviour.txt") && brain::loadBehaviour(nullptr);
       if (!ok) {
         LittleFS.remove("/behaviour.txt");
         if (had) LittleFS.rename("/behaviour.old", "/behaviour.txt");
         brain::loadBehaviour(nullptr);
       }
+      netBrainUnlock();
     } else {
       LittleFS.remove("/behaviour.tmp");
     }
@@ -375,9 +381,11 @@ void serveExport(HttpClient& c, bool all) {
   // In flash if it fits (Wi-Fi is quiet then, but pictures can be large); else on the card, a second try there if that was busy.
   bool toSd = false;
   char err[60], reply[90];
+  netBrainLock();  // (the robot is quiet while it is packed: a second or two for a big one)
   bool made = brain::packExport(LittleFS, "/export.tmp", all, err, sizeof err);
   for (int attempt = 0; !made && sdcard::mounted() && attempt < 2; attempt++)
     toSd = made = brain::packExport(sdcard::fs(), "/teevee/export.tmp", all, err, sizeof err);
+  netBrainUnlock();
   if (!made) {
     const int k = snprintf(reply, sizeof reply, "{\"error\":\"%s\"}", err);
     return respond(c, 400, "application/json", reply, k);

@@ -9,6 +9,9 @@
 #include "portal.h"
 #include "sock_util.h"
 #include "core/ws_proto.h"
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 namespace {
 constexpr int MAX_CLIENTS = 4;
@@ -26,6 +29,9 @@ struct WsClient {
 WiFiServer server(81);
 WsClient clients[MAX_CLIENTS];
 NetMessageFn s_onMsg = nullptr;
+SemaphoreHandle_t s_brainMux = nullptr;  // the robot's state: held by the brain's loop and by anything the web server changes in it
+char s_bcast[256] = "";                  // the newest state report, copied by the brain (under the lock), sent by the web task
+bool s_bcastNew = false;
 Preferences prefs;
 bool s_started = false, s_online = false, s_haveCreds = false;
 constexpr uint8_t HTTP_CLIENT = 0xFF;
@@ -158,7 +164,9 @@ void serve(int i) {
     if (f.opcode == 0x1 && f.fin && s_onMsg) {
       uint8_t keep = f.payload[f.len];
       f.payload[f.len] = 0;
+      netBrainLock();
       s_onMsg((const char*)f.payload, f.len, (uint8_t)i);
+      netBrainUnlock();
       f.payload[f.len] = keep;
     } else if (f.opcode == 0x1 || f.opcode == 0x0) {
       const char* err = "{\"error\":\"fragmented messages not supported\"}";
@@ -204,6 +212,8 @@ void stopAP() {
 }
 }  // namespace
 
+static void netTask(void*);  // (the web task, below)
+
 void netBegin(NetMessageFn onMessage) {
   s_onMsg = onMessage;
   // Which app slot is running / set to boot, and each slot's OTA state (0 new, 1 pending, 2 valid, 3 invalid, 4 aborted,
@@ -231,7 +241,23 @@ void netBegin(NetMessageFn onMessage) {
   WiFi.setAutoReconnect(true);
   WiFi.setSleep(false);
   connect();
+  if (!s_brainMux) s_brainMux = xSemaphoreCreateMutex();
+  xTaskCreatePinnedToCore(netTask, "net", 10240, nullptr, 1, nullptr, 0);
 }
+
+static void netTask(void*) {
+  for (;;) {
+    netLoop();
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+void netPowerSave(bool on) {
+  if (s_apOn) return;  // the setup hotspot is an access point: it cannot doze
+  WiFi.setSleep(on ? WIFI_PS_MIN_MODEM : WIFI_PS_NONE);
+}
+
+static void flushBroadcast();  // (below)
 
 void netLoop() {
   const uint32_t now = millis();
@@ -271,6 +297,7 @@ void netLoop() {
     snprintf(s_status, sizeof s_status, "%s", WiFi.localIP().toString().c_str());
   else
     snprintf(s_status, sizeof s_status, "%s", s_apOn ? "setup mode" : s_haveCreds ? "connecting" : "no wifi");
+  flushBroadcast();
   if (s_started) {
     accept();
     for (int i = 0; i < MAX_CLIENTS; i++)
@@ -280,8 +307,27 @@ void netLoop() {
 }
 
 void netBroadcast(const char* json) {
+  snprintf(s_bcast, sizeof s_bcast, "%s", json);
+  s_bcastNew = true;
+}
+
+// Sends the newest state report to every page that is connected (web task only: the sockets are its own).
+static void flushBroadcast() {
+  if (!s_bcastNew) return;
+  char local[sizeof s_bcast];
+  netBrainLock();
+  memcpy(local, s_bcast, sizeof local);
+  s_bcastNew = false;
+  netBrainUnlock();
   for (WsClient& c : clients)
-    if (c.upgraded) sendFrame(c, 0x1, (const uint8_t*)json, strlen(json));
+    if (c.upgraded) sendFrame(c, 0x1, (const uint8_t*)local, strlen(local));
+}
+
+void netBrainLock() {
+  if (s_brainMux) xSemaphoreTake(s_brainMux, portMAX_DELAY);
+}
+void netBrainUnlock() {
+  if (s_brainMux) xSemaphoreGive(s_brainMux);
 }
 
 void netReply(uint8_t client, const char* json) {
@@ -354,7 +400,11 @@ size_t netHandle(const char* json, size_t len, char* reply, size_t n) {
   reply[0] = 0;
   s_reply = reply;
   s_replyCap = n;
-  if (s_onMsg) s_onMsg(json, len, HTTP_CLIENT);
+  if (s_onMsg) {
+    netBrainLock();
+    s_onMsg(json, len, HTTP_CLIENT);
+    netBrainUnlock();
+  }
   s_reply = nullptr;
   return strlen(reply);
 }

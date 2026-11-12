@@ -728,9 +728,9 @@ void Engine::load(const char* dir) {
     fclose(f);
   }
   if (FILE* f = fopen(join(dir, "mind.bin").c_str(), "rb")) {
-    static MindNet::Weights w;  // an older save (fewer urges) is shorter: load() carries it over
-    const size_t n = fread(&w, 1, sizeof w, f);
-    if (n && fgetc(f) == EOF) _mind.load(&w, n);
+    static uint8_t w[MindNet::MAX_SAVE];  // an older save is a different size (the float ones are bigger): load() carries it over
+    const size_t n = fread(w, 1, sizeof w, f);
+    if (n && fgetc(f) == EOF) _mind.load(w, n);
     fclose(f);
   }
   if (FILE* f = fopen(join(dir, "lookmind.bin").c_str(), "rb")) {

@@ -9,6 +9,15 @@ using NetMessageFn = void (*)(const char* json, size_t len, uint8_t client);
 
 void netBegin(NetMessageFn onMessage);
 void netLoop();
+// Saving power while nobody is looking: the Wi-Fi radio dozes between the access point's beacons (it still hears everything, a
+// little later). Off again for a quick web page.
+void netPowerSave(bool on);
+// The web server runs in its own task (netTask, core 0). The robot's state is changed only by the brain, so the brain holds
+// netBrainLock() for each pass of its loop, and anything the web server does to the robot takes the same lock (a message, a pack
+// install or export, a behaviour reload). A firmware upload touches only flash and takes no lock: it no longer stops the brain.
+void netBrainLock();
+void netBrainUnlock();
+// The state report for the web page's sockets: copied here by the brain (call it with the lock held), sent by the web task.
 void netBroadcast(const char* json);
 void netReply(uint8_t client, const char* json);
 void netSetWifi(const char* ssid, const char* pass);

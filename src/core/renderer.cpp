@@ -914,23 +914,34 @@ bool FaceRenderer::screenToFace(float sx, float sy, float& fx, float& fy) const 
   return true;
 }
 
-int FaceRenderer::renderWarped(const FaceParams& p) {
-  uint32_t t0 = tvMicros();
-  renderFaceTexture(p);
-  warpUs[0] += tvMicros() - t0;
-  warpFrames++;
-  if (!_tex) return 0;
-  _wasCube = true;
-  _cubeNow = true;
-  _valid = false;
-  const HeadView view(_turnXShown, _turnYShown, _fisheye, _rollShown);
+// The turned face's rows. The face texture is shared (read only), and each core has its own scratch, so the two can work at once.
+struct FaceRenderer::WarpView {
+    HeadView head;
+};
+struct FaceRenderer::WarpScratch {
+    uint32_t glowColT[APP_W];  // the glow's column terms, once a frame
+    uint16_t wide[APP_W + 2 * 8];  // a whole row, for the RGB split
+};
+struct FaceRenderer::WarpJob {
+    const FaceRenderer* r;
+    const WarpView* v;
+    WarpScratch s;  // the other core's own
+    int y0, jFrom, jTo, h;
+    uint16_t* out;
+};
+
+// Rows jFrom..jTo-1 of the strip that starts at screen row y0 (h rows), into out (the whole strip: row j at out + j * APP_W).
+void FaceRenderer::warpRows(const WarpView& wv, WarpScratch& sc, int y0, int jFrom, int jTo, int h, uint16_t* out) const {
+  (void)h;
+  const HeadView& view = wv.head;
   const bool glow = glowOn();
   const uint16_t bgSwapped = (uint16_t)(BG >> 8 | BG << 8);
   const uint16_t* const tex = _tex;
   const uint8_t* const texBg = _texBg;
+  uint32_t* const glowColT = sc.glowColT;
+  uint16_t* const wide = sc.wide;
   // The background at screen pixel (sx, sy): the glow behind the head (glowAt, byte-swapped). Its column terms are worked out once a
   // frame, its row term once a row, and the table is swapped once: the same arithmetic as glowStep on the same values, so the same pixels.
-  static uint32_t glowColT[APP_W];
   uint16_t glowSw[128];
   uint32_t glowRowT = 0;
   int glowY = -1;
@@ -992,12 +1003,12 @@ int FaceRenderer::renderWarped(const FaceParams& p) {
     const bool hit = view.project(sx + p + 0.5f, sy + 0.5f, u, v) && fabsf(u) < 8000 && fabsf(v) < 8000;
     return texel(hit ? (int32_t)(u * 65536.f) : -1, hit ? (int32_t)(v * 65536.f) : -1, sx + p, sy);
   };
-  auto row = [&](int sx, int sy, int n, uint16_t* out) {
+  auto row = [&](int sx, int sy, int n, uint16_t* o) {
     rowEnds(sx, sy, n);
     for (int s = 0, i = 0; i < n; s++, i += WARP_SPAN) {
       const int m = min(WARP_SPAN, n - i);
       if (!ends.ok[s]) {
-        for (int j = 0; j < m; j++) out[i + j] = at(sx, sy, n, i + j);
+        for (int j = 0; j < m; j++) o[i + j] = at(sx, sy, n, i + j);
         continue;
       }
       int32_t fu = ends.fu[s], fv = ends.fv[s];
@@ -1008,29 +1019,23 @@ int FaceRenderer::renderWarped(const FaceParams& p) {
           fvN < (240 << 16)) {
         for (int j = 0; j < m; j++, fu += du, fv += dv) {
           const int t = (fv >> 17) * 160 + (fu >> 17);
-          out[i + j] = texBg[t >> 3] >> (t & 7) & 1 ? backdrop(sx + i + j, sy) : tex[t];
+          o[i + j] = texBg[t >> 3] >> (t & 7) & 1 ? backdrop(sx + i + j, sy) : tex[t];
         }
         continue;
       }
-      for (int j = 0; j < m; j++, fu += du, fv += dv) out[i + j] = texel(fu, fv, sx + i + j, sy);
+      for (int j = 0; j < m; j++, fu += du, fv += dv) o[i + j] = texel(fu, fv, sx + i + j, sy);
     }
   };
   // RGB split here, from the neighbouring face pixels: postProcess would see only the strip, not what lies past the screen edge
   const int d = min((int)lroundf(S.rgb_split), 8);
   auto sw = [](uint16_t c) { return (uint16_t)(c >> 8 | c << 8); };
   // Pixelated, postProcess keeps only the pixel at each block's centre: only that one is worked out (1 in N x N), and the
-  // block filled with it, so the picture is the same as from full rows.
+  // block filled with it, so the picture is the same as from full rows. jFrom is on a block's edge (renderWarped's split).
   const int N = pixelSize();
-  static uint16_t wide[APP_W + 2 * 8];
-  const int H = fullRowH(), w = APP_W;
-  int pushes = 0;
-  g_lcdFullFrame = true;
-  t0 = tvMicros();
-  for (int y0 = 0; y0 < APP_H; y0 += H) {
-    const int h = min(H, APP_H - y0);
-    uint16_t* out = _strip[_cur].buffer();
-    for (int j = 0; N && j < h;) {  // the same blocks as postProcess (strips start on a multiple of N)
-      const int rows = min(N - (y0 + j) % N, h - j), sy = y0 + j + (rows >> 1);
+  const int w = APP_W;
+  if (N) {
+    for (int j = jFrom; j < jTo;) {  // the same blocks as postProcess (strips start on a multiple of N)
+      const int rows = min(N - (y0 + j) % N, jTo - j), sy = y0 + j + (rows >> 1);
       // With the RGB split every block reads three pixels of its row. In small blocks that is most of the row, and the whole row
       // in one run (row) costs less than the pixels one at a time (at); both give the same pixel values.
       const bool whole = d && N <= 5;
@@ -1048,7 +1053,8 @@ int FaceRenderer::renderWarped(const FaceParams& p) {
       for (int y = j + 1; y < j + rows; y++) memcpy(out + y * w, out + j * w, (size_t)w * sizeof(uint16_t));  // the block's other rows
       j += rows;
     }
-    for (int j = 0; !N && j < h; j++) {
+  } else {
+    for (int j = jFrom; j < jTo; j++) {
       if (!d) {
         row(0, y0 + j, w, out + j * w);
         continue;
@@ -1058,6 +1064,46 @@ int FaceRenderer::renderWarped(const FaceParams& p) {
         out[j * w + i] = sw(
             (uint16_t)((sw(wide[i + 2 * d]) & 0xF800) | (sw(wide[i + d]) & 0x07E0) | (sw(wide[i]) & 0x001F)));
     }
+  }
+}
+
+void FaceRenderer::warpJob(void* a) {
+  WarpJob* j = (WarpJob*)a;
+  j->r->warpRows(*j->v, j->s, j->y0, j->jFrom, j->jTo, j->h, j->out);
+}
+
+int FaceRenderer::renderWarped(const FaceParams& p) {
+  uint32_t t0 = tvMicros();
+  renderFaceTexture(p);
+  warpUs[0] += tvMicros() - t0;
+  warpFrames++;
+  if (!_tex) return 0;
+  _wasCube = true;
+  _cubeNow = true;
+  _valid = false;
+  const WarpView wv{HeadView(_turnXShown, _turnYShown, _fisheye, _rollShown)};
+  const int N = pixelSize();
+  static WarpScratch mainScratch;  // this core's rows
+  static WarpJob job;              // the other core's rows, and its scratch
+  const int H = fullRowH(), w = APP_W;
+  int pushes = 0;
+  g_lcdFullFrame = true;
+  t0 = tvMicros();
+  for (int y0 = 0; y0 < APP_H; y0 += H) {
+    const int h = min(H, APP_H - y0);
+    uint16_t* out = _strip[_cur].buffer();
+    // The other core takes the lower rows, this core the upper; they write different rows of the same strip. With pixelation the
+    // split is on a block's edge, so each block is still worked out by one core.
+    int split = h / 2;
+    if (N) split = (y0 + split + N - 1) / N * N - y0;
+    if (split <= 0 || split >= h) split = h;
+    const bool other = split < h;
+    if (other) {
+      job.r = this, job.v = &wv, job.y0 = y0, job.jFrom = split, job.jTo = h, job.h = h, job.out = out;
+      tvBackground(&FaceRenderer::warpJob, &job);
+    }
+    warpRows(wv, mainScratch, y0, 0, split, h, out);
+    if (other) tvBackgroundWait();
     const uint32_t tp = tvMicros();
     postProcess(out, 0, y0, w, h, false, N > 0);
     const uint32_t t1 = tvMicros();

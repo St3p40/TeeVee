@@ -273,12 +273,12 @@ void loadPersisted() {
     }
   }
   store.remove("mind");  // (older versions kept the net in NVS; it never fit any more)
-  MindNet::Weights* saved = (MindNet::Weights*)malloc(sizeof(MindNet::Weights));
+  // (an older save is a different size, and the last one in floats is bigger than today's: load() carries it over)
+  static_assert(MindNet::MAX_SAVE >= sizeof(MindNet::Weights), "the buffer must hold today's save too");
+  void* saved = malloc(MindNet::MAX_SAVE);
   if (saved) {
     static_assert(IdleGen::URGES == MindNet::OUT, "IdleGen::URGES must match the mind net's urges");
-    const size_t got =
-        blobRead("mind", saved,
-                 sizeof(MindNet::Weights));  // an older save (fewer urges) is shorter: load() carries it over
+    const size_t got = blobRead("mind", saved, MindNet::MAX_SAVE);
     if (got && mindNet.load(saved, got))
       Serial.printf("mind: restored, %lu reactions learned from\n", (unsigned long)mindNet.weights().updates);
     free(saved);
@@ -812,6 +812,17 @@ void senseStimuli(float dt) {
                         pomoEnd || pomoDoneUntil > now || g_bench || g_stats;
   const bool dark = screenIdle.update(now, settings.screen_off, mustShow);
   g_screenOff = dark;
+  // With the screen dark nobody is looking: the radio dozes, and on a board that runs from a battery the processor drops to a
+  // third of its speed (the robot's own life needs very little of it; drawing is what needs the rest). Both come back with the screen.
+  static bool saving = false;
+  if (dark != saving) {
+    saving = dark;
+    netPowerSave(dark);
+#if BOARD_HAS_BATTERY
+    setCpuFrequencyMhz(dark ? 80 : 240);
+#endif
+    Serial.printf("power: %s\n", dark ? "saving (screen dark)" : "full");
+  }
   bool dim = settings.night_dim && (idle.state(now) == IdleGen::ASLEEP || dayClock.night(now));
   g_brightness = dark  ? 0
                  : dim ? (settings.brightness / 4 > 10 ? settings.brightness / 4 : 10)
@@ -1089,7 +1100,6 @@ void reactSound() {
 }
 
 void tickTimers() {
-  netLoop();
   if (apps::exitRequested()) apps::stop();
   if (now > 5000) apps::bgStep(now);
   {
@@ -1205,6 +1215,7 @@ void brainTask(void*) {
   printHelp();
   if (wakeAt) wakeAt = millis() + 1100;
   for (;;) {
+    netBrainLock();  // the web task changes the robot only while this is not held (net.h)
     now = millis();
     const float dt = (now - lastUpdate) * 1e-3f;
     lastUpdate = now;
@@ -1238,6 +1249,7 @@ void brainTask(void*) {
       Serial.printf("idle: %s\n", STATE_NAMES[st]);
       lastState = st;
     }
+    netBrainUnlock();
     vTaskDelay(pdMS_TO_TICKS(20));
   }
 }

@@ -9,6 +9,8 @@ uint16_t g_fb[desktop::W * desktop::H];
 const auto g_start = std::chrono::steady_clock::now();
 }  // namespace
 
+void tvBackground(void (*fn)(void*), void* arg) { fn(arg); }  // (desktop and web: at once)
+void tvBackgroundWait() {}
 uint32_t tvMicros() {
   return (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() -
                                                                          g_start)

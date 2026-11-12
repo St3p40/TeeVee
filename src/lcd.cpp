@@ -259,3 +259,6 @@ uint16_t* tvAllocPixels(size_t bytes) {
   return (uint16_t*)heap_caps_malloc(bytes, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
 }
 uint32_t tvMicros() { return (uint32_t)micros(); }
+// (the CYD and Lilka draw no turned face, so nothing runs in the background there: at once)
+void tvBackground(void (*fn)(void*), void* arg) { fn(arg); }
+void tvBackgroundWait() {}

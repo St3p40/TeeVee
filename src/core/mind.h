@@ -1,7 +1,9 @@
 #pragma once
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
+#include "fixed.h"
 
 // The mind net: a small recurrent neural network that keeps Teevee's face alive between events.
 //
@@ -16,7 +18,8 @@
 // reactions: it keeps trying slightly different urges (smoothly drifting noise), remembers what it did in the last few
 // seconds (an eligibility trace), and when you pet or praise it the weights that produced those urges are strengthened,
 // when you poke or scold it they are weakened (reward-modulated node perturbation). explain() / learned() say why.
-// No Arduino deps; weights ~2.4 KB.
+// The net itself works in 16-bit whole numbers (fixed point: see MindNet), not floats; the senses come in and the urges go out as
+// floats. No Arduino deps; weights ~2.6 KB at 32 inner units.
 
 // Where each input comes from, per build (the net itself is the same everywhere; a sense a build cannot read stays 0):
 //   every build:   valence, arousal, dominance, mood, hour (sin, cos), hour_liked, pet_rate, poke_rate, idle_time, sleepiness,
@@ -115,8 +118,9 @@ struct SavedLayout {
     uint32_t version;
     int out, in;
 };
-inline const SavedLayout OLD_LAYOUTS[] = {{2, 17, 29}, {3, 19, 29}, {4, 19, 31},
-                                          {5, 19, 32}, {6, 19, 33}, {7, 19, 34}};
+// (all of these are in floats; 8 was the last of them, and the net has held whole numbers since 9)
+inline const SavedLayout OLD_LAYOUTS[] = {{2, 17, 29}, {3, 19, 29}, {4, 19, 31}, {5, 19, 32},
+                                          {6, 19, 33}, {7, 19, 34}, {8, 19, 35}};
 struct Instinct {
     uint8_t urge, sense;
     float w;
@@ -163,21 +167,42 @@ class MindNet {
   public:
     static constexpr int IN = mind::IN, N = TEEVEE_MIND_N, OUT = mind::OUT;
     static constexpr uint32_t
-        VERSION = 8,
+        VERSION = 9,
         RES_SEED =
-            0x7EE5EEDu;  // 3: head urges (OUT 17 -> 19); 4: presence + battery (IN 29 -> 31); 5: watched; 6: screen; 7: trust (IN 34); older saves load
+            0x7EE5EEDu;  // 3: head urges (OUT 17 -> 19); 4: presence + battery (IN 29 -> 31); 5: watched; 6: screen; 7: trust (IN 34); 8: streak (IN 35), the last one in floats; 9: int16. Older saves load
+
+    // The net works in whole numbers, 16 bits each (fixed point), not in floats:
+    //   signals (senses, the inner state, urges)  int16, the whole range for -1..1: 32767 is 1 (SIG_ONE; "Q15")
+    //   weights (and the exploring noise)         int16, 4096 is 1 (W_ONE; "Q12"), so they reach +-8 and are held to +-3
+    //   what it did lately (eligibility traces)   int16, 16384 is 1 (E_ONE; "Q14")
+    // Sums are 32-bit, with 19 bits after the point (ACC). tanh is a table. The senses still arrive as floats (the feelings are
+    // floats), and what the rest of the program reads (urge(), input(), explain()...) is given back in floats.
+    static constexpr int32_t SIG_ONE = fx::SIG_ONE, W_ONE = 4096, E_ONE = 16384;
+    static constexpr int ACC = fx::ACC;
 
     struct Weights {
         uint32_t version, updates, seed;
-        float wr[OUT][N];
-        float wi[OUT][IN];
-        float b[OUT];
-        float hourLike[24];
+        int16_t wr[OUT][N];    // Q12
+        int16_t wi[OUT][IN];   // Q12
+        int16_t b[OUT];        // Q12
+        int16_t hourLike[24];  // Q15
     };
     struct Reason {
         int input;
         float amount;
     };
+    // The most bytes a save can be: the last float one (version 8) is about twice the size of today's. Read a save into a buffer
+    // of this size, or an old one is cut short and what it learned is lost.
+    static constexpr size_t MAX_SAVE = 3 * sizeof(uint32_t) + (size_t)(OUT * N + OUT * IN + OUT + 24) * sizeof(float);
+
+    static float sigF(int32_t q) { return fx::sigF(q); }
+    static float wF(int32_t q) { return q * (1.f / W_ONE); }
+    static int16_t sigQ(float v) { return fx::sigQ(v); }
+    static int16_t wQ(float v) {
+      if (!(v == v)) return 0;
+      const float c = v < -W_LIMIT ? -W_LIMIT : v > W_LIMIT ? W_LIMIT : v;
+      return (int16_t)lroundf(c * W_ONE);
+    }
 
     void init(uint32_t noiseSeed) {
       _rng = noiseSeed ? noiseSeed : 0x2545F491u;
@@ -185,14 +210,15 @@ class MindNet {
       _w.version = VERSION;
       _w.seed = RES_SEED;
       for (int k = 0; k < OUT; k++) {
-        for (int i = 0; i < IN; i++) _w.wi[k][i] = prior(k, i);
-        _w.b[k] = priorBias(k);
-        for (int j = 0; j < N; j++) _w.wr[k][j] = 0.1f * sqrtf(32.f / N) * unit(0xABCDu + k, j);
+        for (int i = 0; i < IN; i++) _w.wi[k][i] = priorQ(k, i);
+        _w.b[k] = wQ(priorBias(k));
+        for (int j = 0; j < N; j++) _w.wr[k][j] = wQ(0.1f * sqrtf(32.f / N) * unit(0xABCDu + k, j));
       }
       resetState();
     }
-    // A save of this version, or an older one (mind::OLD_LAYOUTS): what it learned is kept, urges and senses added since start from the prior.
-    // Senses are only ever added before the bias, so an old save's senses stay in place and its bias column moves to the bias's place.
+    // A save of this version, or an older one in floats (version 8, and mind::OLD_LAYOUTS before it): what it learned is kept, turned
+    // into whole numbers; urges and senses added since start from the prior. Senses are only ever added before the bias, so an old
+    // save's senses stay in place and its bias column moves to the bias's place.
     bool load(const void* blob, size_t len) {
       const uint8_t* p = (const uint8_t*)blob;
       uint32_t head[3];
@@ -212,14 +238,20 @@ class MindNet {
       _w.updates = head[1];
       _w.seed = head[2];
       p += sizeof head;
-      for (int k = 0; k < oOut; k++, p += N * sizeof(float)) memcpy(_w.wr[k], p, N * sizeof(float));
-      for (int k = 0; k < oOut; k++, p += oIn * sizeof(float)) {
-        memcpy(_w.wi[k], p, (oIn - 1) * sizeof(float));
-        memcpy(&_w.wi[k][mind::I_BIAS], p + (oIn - 1) * sizeof(float), sizeof(float));
+      auto next = [&p]() {
+        float v;
+        memcpy(&v, p, sizeof v);
+        p += sizeof v;
+        return v;
+      };
+      for (int k = 0; k < oOut; k++)
+        for (int j = 0; j < N; j++) _w.wr[k][j] = wQ(next());
+      for (int k = 0; k < oOut; k++) {
+        for (int i = 0; i < oIn - 1; i++) _w.wi[k][i] = wQ(next());
+        _w.wi[k][mind::I_BIAS] = wQ(next());
       }
-      memcpy(_w.b, p, oOut * sizeof(float));
-      p += oOut * sizeof(float);
-      memcpy(_w.hourLike, p, sizeof _w.hourLike);
+      for (int k = 0; k < oOut; k++) _w.b[k] = wQ(next());
+      for (int16_t& h : _w.hourLike) h = sigQ(next());
       return true;
     }
     const Weights& weights() const { return _w; }
@@ -230,155 +262,186 @@ class MindNet {
 
     void step(const MindInputs& in, float dt) {
       using namespace mind;
+      // The senses: floats from the rest of the robot, made into signals here.
       const float dv = in.v - _pv, da = in.a - _pa;
       _pv = in.v;
       _pa = in.a;
       _novelty += (fminf(1.f, 3.f * (fabsf(dv) + fabsf(da))) - _novelty) * (1.f - expf(-dt / 3.f));
       const float hr = in.hour * 0.2618f;
-      float* x = _x;
-      x[I_VALENCE] = in.v;
-      x[I_AROUSAL] = in.a;
-      x[I_DOMINANCE] = in.d;
-      x[I_MOOD] = in.mood;
-      x[I_HOUR_SIN] = in.hour < 0 ? 0.f : sinf(hr);
-      x[I_HOUR_COS] = in.hour < 0 ? 0.f : cosf(hr);
-      x[I_PET] = fminf(in.petRate / 3, 1);
-      x[I_POKE] = fminf(in.pokeRate / 3, 1);
-      x[I_LIGHT] = in.light;
-      x[I_SINCE_TOUCH] = expf(-in.sinceTouch / 20.f);
-      x[I_SINCE_EVENT] = expf(-in.sinceEvent / 60.f);
-      x[I_IDLE] = fminf(in.idleSec / 240.f, 1);
-      x[I_SLEEPY] = in.sleepy;
-      x[I_TOUCHING] = in.touching ? 1.f : 0.f;
-      x[I_TOUCH_X] = in.tx;
-      x[I_TOUCH_Y] = in.ty;
-      x[I_MOTION] = fminf(in.motion, 1);
-      x[I_TILT_X] = in.tiltX;
-      x[I_TILT_Y] = in.tiltY;
-      x[I_CARRIED] = in.carried ? 1.f : 0.f;
-      x[I_EYES] = in.openness * 2 - 1;
-      x[I_EMOTE] = in.emote ? 1.f : 0.f;
-      x[I_NOVELTY] = _novelty;
-      x[I_LONELY] = fminf(in.idleSec / 1800.f, 1.f);
-      x[I_PRESENCE] = fminf(fmaxf(in.presence, 0.f), 1.f);
-      x[I_BATTERY] = fminf(fmaxf(in.batteryLow, 0.f), 1.f);
-      x[I_WATCHED] = fminf(fmaxf(in.watched, 0.f), 1.f);
-      x[I_SCREEN] = fminf(fmaxf(in.screen, 0.f), 1.f);
-      x[I_TRUST] = fminf(fmaxf(in.trust, -1.f), 1.f);
-      x[I_STREAK] = fminf(fmaxf(in.streak, -1.f), 1.f);
-      x[I_NEED_ATTN] = in.needAttention;
-      x[I_NEED_REST] = in.needRest;
-      x[I_NEED_PLAY] = in.needPlay;
+      int16_t* x = _x;
+      x[I_VALENCE] = sigQ(in.v);
+      x[I_AROUSAL] = sigQ(in.a);
+      x[I_DOMINANCE] = sigQ(in.d);
+      x[I_MOOD] = sigQ(in.mood);
+      x[I_HOUR_SIN] = in.hour < 0 ? 0 : sigQ(sinf(hr));
+      x[I_HOUR_COS] = in.hour < 0 ? 0 : sigQ(cosf(hr));
+      x[I_PET] = sigQ(in.petRate / 3);
+      x[I_POKE] = sigQ(in.pokeRate / 3);
+      x[I_LIGHT] = sigQ(in.light);
+      x[I_SINCE_TOUCH] = sigQ(expf(-in.sinceTouch / 20.f));
+      x[I_SINCE_EVENT] = sigQ(expf(-in.sinceEvent / 60.f));
+      x[I_IDLE] = sigQ(in.idleSec / 240.f);
+      x[I_SLEEPY] = sigQ(in.sleepy);
+      x[I_TOUCHING] = in.touching ? SIG_ONE : 0;
+      x[I_TOUCH_X] = sigQ(in.tx);
+      x[I_TOUCH_Y] = sigQ(in.ty);
+      x[I_MOTION] = sigQ(in.motion);
+      x[I_TILT_X] = sigQ(in.tiltX);
+      x[I_TILT_Y] = sigQ(in.tiltY);
+      x[I_CARRIED] = in.carried ? SIG_ONE : 0;
+      x[I_EYES] = sigQ(in.openness * 2 - 1);
+      x[I_EMOTE] = in.emote ? SIG_ONE : 0;
+      x[I_NOVELTY] = sigQ(_novelty);
+      x[I_LONELY] = sigQ(in.idleSec / 1800.f);
+      x[I_PRESENCE] = sigQ(fmaxf(in.presence, 0.f));
+      x[I_BATTERY] = sigQ(fmaxf(in.batteryLow, 0.f));
+      x[I_WATCHED] = sigQ(fmaxf(in.watched, 0.f));
+      x[I_SCREEN] = sigQ(fmaxf(in.screen, 0.f));
+      x[I_TRUST] = sigQ(in.trust);
+      x[I_STREAK] = sigQ(in.streak);
+      x[I_NEED_ATTN] = sigQ(in.needAttention);
+      x[I_NEED_REST] = sigQ(in.needRest);
+      x[I_NEED_PLAY] = sigQ(in.needPlay);
       _hour = in.hour;
-      x[I_HOUR_LIKE] = in.hour >= 0 && in.hour < 24 ? _w.hourLike[(int)in.hour] : 0.f;
-      if (in.weekKnown) x[I_HOUR_LIKE] = 0.5f * x[I_HOUR_LIKE] + 0.5f * fminf(fmaxf(in.weekLike, -1.f), 1.f);
-      x[I_BIAS] = 1.f;
+      x[I_HOUR_LIKE] = in.hour >= 0 && in.hour < 24 ? _w.hourLike[(int)in.hour] : 0;
+      if (in.weekKnown) x[I_HOUR_LIKE] = (int16_t)((x[I_HOUR_LIKE] + sigQ(in.weekLike)) / 2);
+      x[I_BIAS] = SIG_ONE;
 
-      const float alpha = 1.f - expf(-dt / 0.3f);
+      // This step's rates, worked out once (in floats) and used as whole numbers below.
+      const int32_t alpha = rateQ(1.f - expf(-dt / 0.3f));
+      const float rhoF = expf(-dt / 2.5f);
+      const int32_t rho = rateQ(rhoF), nz = rateQ(sqrtf(1 - rhoF * rhoF)), keep = rateQ(1.f - expf(-dt / 6.f));
+      const int32_t sigma = (int32_t)lroundf(_sigma * W_ONE);
       _t += dt;
       static const float PERIOD[3] = {17.f, 47.f,
                                       131.f};  // slow inner rhythms, so it never settles into a fixed state
-      float osc[3];
-      for (int q = 0; q < 3; q++) osc[q] = sinf(6.2831853f * _t / PERIOD[q] + 2.1f * q);
-      float rn[N];
+      int16_t osc[3];
+      for (int q = 0; q < 3; q++) osc[q] = sigQ(sinf(6.2831853f * _t / PERIOD[q] + 2.1f * q));
+
+      // The inner state. Products are weight (Q12) x signal (Q15) = Q27, added up at Q19 (ACC).
+      int16_t rn[N];
       const Wiring& wire = wiring();
       for (int j = 0; j < N; j++) {
-        float s = 0.2f * gauss();
-        for (int q = 0; q < 3; q++) s += wire.osc[j][q] * osc[q];
-        for (int i = 0; i < IN; i++) s += wire.in[j][i] * x[i];
-        for (int n = 0; n < wire.links[j]; n++) s += wire.rec[j][n] * _r[wire.from[j][n]];
-        rn[j] = (1 - alpha) * _r[j] + alpha * tanhf(s);
+        int32_t s = (gauss() * 6554) >> (30 - ACC);  // 0.2 x the noise
+        for (int q = 0; q < 3; q++) s += (wire.osc[j][q] * osc[q]) >> (27 - ACC);
+        const int16_t* wi = wire.in[j];
+        for (int i = 0; i < IN; i++) s += (wi[i] * x[i]) >> (27 - ACC);
+        const int16_t* wr = wire.rec + wire.first[j];
+        const uint8_t* from = wire.from + wire.first[j];
+        for (int n = wire.first[j + 1] - wire.first[j]; n > 0; n--) s += (*wr++ * _r[*from++]) >> (27 - ACC);
+        rn[j] = (int16_t)(_r[j] + rsh((tanhQ(s) - _r[j]) * alpha, 15));
       }
       memcpy(_r, rn, sizeof _r);
 
-      const float rho = expf(-dt / 2.5f), nz = sqrtf(1 - rho * rho);
-      const float lam = expf(-dt / 6.f);
+      // The urges, and what this step's exploring did (the traces).
+      const bool learning = _lr > 0 && _sigma > 0;
       for (int k = 0; k < OUT; k++) {
-        float z = _w.b[k];
-        for (int i = 0; i < IN; i++) z += _w.wi[k][i] * x[i];
-        for (int j = 0; j < N; j++) z += _w.wr[k][j] * _r[j];
-        const float o = tanhf(z);
-        _n[k] = rho * _n[k] + nz * gauss();
-        _o[k] = o;
-        float a = o + _sigma * _n[k];
-        _a[k] = a < -1 ? -1 : a > 1 ? 1 : a;
-        if (_lr > 0 && _sigma > 0) {  // remember what this perturbation was
-          const float g = (1 - lam) * _n[k] * (1 - o * o);
-          for (int j = 0; j < N; j++) _er[k][j] = lam * _er[k][j] + g * _r[j];
-          for (int i = 0; i < IN; i++) _ei[k][i] = lam * _ei[k][i] + g * x[i];
-          _eb[k] = lam * _eb[k] + g;
+        int32_t z = _w.b[k] * (1 << (ACC - 12));
+        const int16_t *wi = _w.wi[k], *wr = _w.wr[k];
+        for (int i = 0; i < IN; i++) z += (wi[i] * x[i]) >> (27 - ACC);
+        for (int j = 0; j < N; j++) z += (wr[j] * _r[j]) >> (27 - ACC);
+        const int32_t o = tanhQ(z);
+        // the exploring noise, Q12: it drifts (an Ornstein-Uhlenbeck walk), held to the int16 range
+        const int32_t n = clamp16(rsh(rho * _n[k], 15) + rsh(nz * gauss(), 18));
+        _n[k] = (int16_t)n;
+        _o[k] = (int16_t)o;
+        _a[k] = (int16_t)clampSig(o + rsh(sigma * n, 9));
+        if (learning) {  // remember what this perturbation was: trace += (1 - lam) * (noise * (1 - o^2) * signal - trace)
+          const int32_t slope = SIG_ONE - ((o * o) >> 15);                // 1 - o^2, Q15
+          const int32_t g = clampG(rsh(n * slope, 13));                   // Q12 x Q15 -> Q14
+          int16_t *er = _er[k], *ei = _ei[k];
+          for (int j = 0; j < N; j++) er[j] = (int16_t)(er[j] + rsh((rsh(g * _r[j], 15) - er[j]) * keep, 15));
+          for (int i = 0; i < IN; i++) ei[i] = (int16_t)(ei[i] + rsh((rsh(g * x[i], 15) - ei[i]) * keep, 15));
+          _eb[k] = (int16_t)(_eb[k] + rsh((g - _eb[k]) * keep, 15));
         }
-        // slow pull back to the innate prior, so a few bad days do not rewrite it
-        const float pull = 2e-6f * dt * 10;
-        for (int i = 0; i < IN; i++) _w.wi[k][i] += pull * (prior(k, i) - _w.wi[k][i]);
-        for (int j = 0; j < N; j++) _w.wr[k][j] -= pull * _w.wr[k][j] * 0.5f;
+      }
+
+      // The slow pull back to the innate prior, so a few bad days do not rewrite it. Per step it is far less than one step of a
+      // weight (2e-6 of the distance), so it is saved up and paid out every so often, each weight moving a whole number of steps:
+      // the fraction left over is settled by chance, so on average it is exact.
+      _pull += 2e-6f * dt * 10;
+      if (_pull >= PULL_EVERY) {
+        const float p = _pull;
+        _pull = 0;
+        for (int k = 0; k < OUT; k++) {
+          for (int i = 0; i < IN; i++) _w.wi[k][i] = (int16_t)(_w.wi[k][i] + whole(p * (priorQ(k, i) - _w.wi[k][i])));
+          for (int j = 0; j < N; j++) _w.wr[k][j] = (int16_t)(_w.wr[k][j] - whole(p * 0.5f * _w.wr[k][j]));
+        }
       }
     }
 
     void reward(float r) {
       if (r == 0 || _lr <= 0) return;
       if (_hour >= 0 && _hour < 24) {
-        float& hl = _w.hourLike[(int)_hour];
-        hl += 0.1f * ((r < -1 ? -1 : r > 1 ? 1 : r) - hl);
+        int16_t& hl = _w.hourLike[(int)_hour];
+        hl = (int16_t)(hl + rsh((sigQ(r) - hl) * 3277, 15));  // 0.1 of the way
       }
-      const float k =
-          GAIN * _lr * r *
-          (32.f /
-           N);  // the step per weight shrinks with the size, so a reaction moves the urges the same way at any N
-      for (int u = 0; u < OUT; u++) {
-        for (int j = 0; j < N; j++) _w.wr[u][j] = clampw(_w.wr[u][j] + k * _er[u][j]);
-        for (int i = 0; i < IN; i++) _w.wi[u][i] = clampw(_w.wi[u][i] + k * _ei[u][i]);
-        _w.b[u] = clampw(_w.b[u] + k * _eb[u]);
+      // the step per weight shrinks with the size, so a reaction moves the urges the same way at any N
+      const float kf = GAIN * _lr * r * (32.f / N);
+      const int32_t k = (int32_t)lroundf((kf < -7 ? -7 : kf > 7 ? 7 : kf) * W_ONE);  // Q12
+      for (int u = 0; u < OUT; u++) {  // weight (Q12) += k (Q12) x trace (Q14)
+        for (int j = 0; j < N; j++) _w.wr[u][j] = clampw(_w.wr[u][j] + rsh(k * _er[u][j], 14));
+        for (int i = 0; i < IN; i++) _w.wi[u][i] = clampw(_w.wi[u][i] + rsh(k * _ei[u][i], 14));
+        _w.b[u] = clampw(_w.b[u] + rsh(k * _eb[u], 14));
       }
       _w.updates++;
     }
 
-    float urge(int k) const { return _a[k]; }
-    float raw(int k) const { return _o[k]; }
-    float input(int i) const { return _x[i]; }
-    float inner(int j) const { return _r[j]; }
+    float urge(int k) const { return sigF(_a[k]); }
+    float raw(int k) const { return sigF(_o[k]); }
+    float input(int i) const { return sigF(_x[i]); }
+    float inner(int j) const { return sigF(_r[j]); }
+    // The numbers themselves, as the net holds them (int16; 32767 = 1).
+    int16_t urgeQ(int k) const { return _a[k]; }
+    int16_t inputQ(int i) const { return _x[i]; }
+    int16_t innerQ(int j) const { return _r[j]; }
+    // A learned weight as a float: an urge's weight on a sense, and how much it likes an hour of the day.
+    float weightIn(int urge, int sense) const { return wF(_w.wi[urge][sense]); }
+    float hourLiked(int hour) const { return hour >= 0 && hour < 24 ? sigF(_w.hourLike[hour]) : 0.f; }
     float activity() const {
       float s = 0;
-      for (float v : _r) s += v * v;
+      for (int16_t v : _r) s += sigF(v) * sigF(v);
       return sqrtf(s / N);
     }
 
     int explain(int urge, Reason* out, int max) const {
       Reason all[IN + 2];
       int n = 0;
-      for (int i = 0; i < IN - 1; i++) all[n++] = {i, _w.wi[urge][i] * _x[i]};
+      for (int i = 0; i < IN - 1; i++) all[n++] = {i, wF(_w.wi[urge][i]) * sigF(_x[i])};
       float inner = 0;
-      for (int j = 0; j < N; j++) inner += _w.wr[urge][j] * _r[j];
+      for (int j = 0; j < N; j++) inner += wF(_w.wr[urge][j]) * sigF(_r[j]);
       all[n++] = {-1, inner};
-      all[n++] = {-2, _w.b[urge] + _w.wi[urge][mind::I_BIAS]};
+      all[n++] = {-2, wF(_w.b[urge]) + wF(_w.wi[urge][mind::I_BIAS])};
       return top(all, n, out, max);
     }
     // What it has learned about an urge: the senses whose weight moved most from the prior (signed shift).
     int learned(int urge, Reason* out, int max) const {
       Reason all[IN];
       int n = 0;
-      for (int i = 0; i < IN - 1; i++) all[n++] = {i, _w.wi[urge][i] - prior(urge, i)};
+      for (int i = 0; i < IN - 1; i++) all[n++] = {i, wF(_w.wi[urge][i] - priorQ(urge, i))};
       return top(all, n, out, max);
     }
     float shift(int urge) const {  // total distance from the prior
-      float s = 0;
-      for (int i = 0; i < IN; i++) s += fabsf(_w.wi[urge][i] - prior(urge, i));
-      return s;
+      int32_t s = 0;
+      for (int i = 0; i < IN; i++) s += abs(_w.wi[urge][i] - priorQ(urge, i));
+      return wF(s);
     }
-    // The innate prior: which senses each urge starts out following. Looked up once per urge and sense (a table, rebuilt
-    // only when the behaviour's instincts change), not searched on every step.
-    static float prior(int u, int i) {
-      static float table[OUT][IN];
+    // The innate prior: which senses each urge starts out following, as the net holds it (a weight, Q12). Looked up once per urge
+    // and sense (a table, rebuilt only when the behaviour's instincts change), not searched on every step.
+    static int16_t priorQ(int u, int i) {
+      static int16_t table[OUT][IN];
       static const mind::Instinct* key = nullptr;
       static int keyCount = -1;
       if (key != mind::INSTINCTS || keyCount != mind::INSTINCT_COUNT) {
         for (int k = 0; k < OUT; k++)
-          for (int j = 0; j < IN; j++) table[k][j] = priorRaw(k, j);
+          for (int j = 0; j < IN; j++) table[k][j] = wQ(priorRaw(k, j));
         key = mind::INSTINCTS;
         keyCount = mind::INSTINCT_COUNT;
       }
       return table[u][i];
     }
+    // The same as it was written (a float; searched, so not for the step).
+    static float prior(int u, int i) { return priorRaw(u, i); }
     static float priorRaw(int u, int i) {
       using namespace mind;
       for (int k = 0; k < INSTINCT_COUNT; k++)
@@ -444,33 +507,62 @@ class MindNet {
 
   private:
     static constexpr float GAIN = 2.f;
+    static constexpr float W_LIMIT = 3.f;       // weights are held to +-3
+    static constexpr float PULL_EVERY = 5e-4f;  // the pull to the prior is paid out when this much of the distance is due (about 25 s)
 
-    static float clampw(float v) { return v < -3 ? -3 : v > 3 ? 3 : v; }
+    // Whole-number helpers. rsh: a shift right that rounds to the nearest (a plain shift always rounds down, which would
+    // slowly drag every decaying value below zero).
+    static int32_t rsh(int32_t v, int s) { return fx::rsh(v, s); }
+    static int32_t clamp16(int32_t v) { return v < -32767 ? -32767 : v > 32767 ? 32767 : v; }
+    static int32_t clampSig(int32_t v) { return v < -SIG_ONE ? -SIG_ONE : v > SIG_ONE ? SIG_ONE : v; }
+    static int32_t clampG(int32_t v) { return v < -32767 ? -32767 : v > 32767 ? 32767 : v; }  // (a trace's target: +-2 at Q14)
+    static int16_t clampw(int32_t v) {
+      const int32_t lim = (int32_t)(W_LIMIT * W_ONE);
+      return (int16_t)(v < -lim ? -lim : v > lim ? lim : v);
+    }
+    static int32_t rateQ(float v) { return (int32_t)lroundf((v < 0 ? 0 : v > 1 ? 1 : v) * 32768.f); }  // 0..1 as Q15
+    // A float amount of weight steps as a whole number: the fraction is settled by chance.
+    int32_t whole(float v) {
+      const float f = floorf(v);
+      return (int32_t)f + ((rnd() >> 8) * (1.f / 16777216.f) < v - f ? 1 : 0);
+    }
 
-    // The inner state's fixed wiring: random from the seed alone, so it is worked out once (not every step). Each weight is
-    // the same product the step used to form, so the inner state is unchanged.
+    static int32_t tanhQ(int32_t s) { return fx::tanhQ(s); }  // (the table is shared with the look net: fixed.h)
+
+    // The inner state's fixed wiring: random from the seed alone, so it is worked out once (not every step). Weights at Q12.
+    // Which inner units each one listens to: about a quarter of all pairs, so the links are kept one after another (unit j's are
+    // first[j] .. first[j + 1]), not in N x N tables that would be three quarters empty.
     struct Wiring {
-        float osc[N][3];   // the slow rhythms
-        float in[N][IN];   // the senses
-        uint8_t links[N];  // how many inner units each one listens to, and which (from), with its weight (rec)
-        uint8_t from[N][N];
-        float rec[N][N];
+        int16_t osc[N][3];      // the slow rhythms
+        int16_t in[N][IN];      // the senses
+        uint16_t first[N + 1];  // where each unit's links start
+        uint8_t* from;          // the unit a link listens to
+        int16_t* rec;           // and its weight
     };
+    static bool linked(int j, int m) { return ((hash(0x2222u + j, m) >> 3) & 7) < 2; }
     static const Wiring& wiring() {
       static Wiring w;
       static bool built = false;
       if (!built) {
         const float rscale = sqrtf(32.f / N);
+        int links = 0;
+        for (int j = 0; j < N; j++)
+          for (int m = 0; m < N; m++) links += linked(j, m);
+        w.from = (uint8_t*)malloc(links ? links : 1);
+        w.rec = (int16_t*)malloc((links ? links : 1) * sizeof(int16_t));
+        const bool room = w.from && w.rec;  // (no memory: an inner state with no links of its own; it still follows the senses)
+        int n = 0;
         for (int j = 0; j < N; j++) {
-          for (int q = 0; q < 3; q++) w.osc[j][q] = 0.6f * unit(0x4444u + j, q);
-          for (int i = 0; i < IN; i++) w.in[j][i] = 0.4f * unit(0x1111u + j, resKey(i));
-          w.links[j] = 0;
-          for (int m = 0; m < N; m++)
-            if (((hash(0x2222u + j, m) >> 3) & 7) < 2) {
-              w.from[j][w.links[j]] = (uint8_t)m;
-              w.rec[j][w.links[j]++] = rscale * unit(0x3333u + j, m);
+          for (int q = 0; q < 3; q++) w.osc[j][q] = wQ(0.6f * unit(0x4444u + j, q));
+          for (int i = 0; i < IN; i++) w.in[j][i] = wQ(0.4f * unit(0x1111u + j, resKey(i)));
+          w.first[j] = (uint16_t)n;
+          for (int m = 0; room && m < N; m++)
+            if (linked(j, m)) {
+              w.from[n] = (uint8_t)m;
+              w.rec[n++] = wQ(rscale * unit(0x3333u + j, m));
             }
         }
+        w.first[N] = (uint16_t)n;
         built = true;
       }
       return w;
@@ -484,6 +576,7 @@ class MindNet {
       memset(_ei, 0, sizeof _ei);
       memset(_eb, 0, sizeof _eb);
       _novelty = 0;
+      _pull = 0;
     }
     static int top(Reason* all, int n, Reason* out, int max) {
       for (int i = 1; i < n; i++) {
@@ -523,16 +616,18 @@ class MindNet {
       _rng ^= _rng << 5;
       return _rng;
     }
-    float gauss() {
-      float s = 0;
-      for (int i = 0; i < 4; i++) s += (rnd() >> 8) * (1.f / 16777216.f);
-      return (s - 2.f) * 1.7320508f;
+    // Noise with a bell shape and a spread of 1, as a signal (Q15; it reaches about +-3.5, so it is 32-bit): four draws added up.
+    int32_t gauss() {
+      int32_t s = 0;
+      for (int i = 0; i < 4; i++) s += (int32_t)(rnd() >> 8);  // four of 0..1 at Q24
+      return (((s - (2 << 24)) >> 9) * 14189) >> 13;         // (sum - 2) x sqrt(3), Q24 -> Q15
     }
 
     Weights _w{};
-    float _x[IN]{}, _r[N]{}, _n[OUT]{}, _o[OUT]{}, _a[OUT]{};
-    float _er[OUT][N]{}, _ei[OUT][IN]{}, _eb[OUT]{};
-    float _pv = 0, _pa = 0, _novelty = 0, _t = 0, _hour = -1;
+    int16_t _x[IN]{}, _r[N]{}, _o[OUT]{}, _a[OUT]{};  // signals, Q15
+    int16_t _n[OUT]{};                                // the exploring noise, Q12
+    int16_t _er[OUT][N]{}, _ei[OUT][IN]{}, _eb[OUT]{};  // traces, Q14
+    float _pv = 0, _pa = 0, _novelty = 0, _t = 0, _hour = -1, _pull = 0;
     float _lr = 0.05f, _sigma = 0.3f;
     uint32_t _rng = 1;
 };

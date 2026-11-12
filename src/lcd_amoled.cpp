@@ -8,6 +8,9 @@
 #include <esp_heap_caps.h>
 #include <esp_lcd_io_spi.h>
 #include <esp_lcd_panel_io.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 #include "board.h"
 
 // The Waveshare AMOLED (ESP32-S3-Touch-AMOLED-1.8, V2): a 368x448 CO5300 panel on QSPI, with the 320x240 face in its middle.
@@ -245,4 +248,40 @@ uint16_t* tvAllocPixels(size_t bytes) {
   return (uint16_t*)heap_caps_malloc(bytes, MALLOC_CAP_DMA | MALLOC_CAP_8BIT);
 }
 uint32_t tvMicros() { return (uint32_t)micros(); }
+
+// The other core for the turned face's rows (platform.h): a worker task on core 0 that waits for a job, does it, and says so.
+// The brain and the web server share core 0 too, so the worker is short-lived per strip and sleeps in between.
+namespace {
+SemaphoreHandle_t s_bgGo = nullptr, s_bgDone = nullptr;
+void (*s_bgFn)(void*) = nullptr;
+void* s_bgArg = nullptr;
+bool s_bgBusy = false;
+void bgLoop(void*) {
+  for (;;) {
+    xSemaphoreTake(s_bgGo, portMAX_DELAY);
+    s_bgFn(s_bgArg);
+    xSemaphoreGive(s_bgDone);
+  }
+}
+}  // namespace
+
+void tvBackground(void (*fn)(void*), void* arg) {
+  if (!s_bgGo) {
+    s_bgGo = xSemaphoreCreateBinary();
+    s_bgDone = xSemaphoreCreateBinary();
+    if (!s_bgGo || !s_bgDone || xTaskCreatePinnedToCore(bgLoop, "warp", 6144, nullptr, 2, nullptr, 0) != pdPASS) {
+      fn(arg);  // no worker: this core does it all
+      return;
+    }
+  }
+  s_bgFn = fn;
+  s_bgArg = arg;
+  s_bgBusy = true;
+  xSemaphoreGive(s_bgGo);
+}
+void tvBackgroundWait() {
+  if (!s_bgBusy) return;
+  xSemaphoreTake(s_bgDone, portMAX_DELAY);
+  s_bgBusy = false;
+}
 #endif

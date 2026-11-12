@@ -188,33 +188,42 @@ int main() {
       };
       const uint32_t head[3] = {(uint32_t)ver, w.updates, w.seed};
       put(head, sizeof head);
-      for (int k = 0; k < oOut; k++) put(w.wr[k], sizeof w.wr[k]);
+      // (the old saves hold floats; a weight is a whole number of 1/4096, which a float holds exactly, so it comes back the same)
+      auto putW = [&](int16_t q) {
+        const float f = MindNet::wF(q);
+        put(&f, sizeof f);
+      };
+      for (int k = 0; k < oOut; k++)
+        for (int j = 0; j < MindNet::N; j++) putW(w.wr[k][j]);
       for (int k = 0; k < oOut; k++) {
-        put(w.wi[k], (oIn - 1) * sizeof(float));
-        put(&w.wi[k][I_BIAS], sizeof(float));
+        for (int i = 0; i < oIn - 1; i++) putW(w.wi[k][i]);
+        putW(w.wi[k][I_BIAS]);
       }
-      put(w.b, oOut * sizeof(float));
-      put(w.hourLike, sizeof w.hourLike);
+      for (int k = 0; k < oOut; k++) putW(w.b[k]);
+      for (int16_t h : w.hourLike) {
+        const float f = MindNet::sigF(h);
+        put(&f, sizeof f);
+      }
       MindNet n3;
       n3.init(5);
       CHECK(n3.load(old.data(), old.size()));
       const MindNet::Weights& v = n3.weights();
       CHECK(v.version == MindNet::VERSION && v.updates == w.updates &&
-            !memcmp(v.wi[U_MIRTH], w.wi[U_MIRTH], (oIn - 1) * sizeof(float)));
+            !memcmp(v.wi[U_MIRTH], w.wi[U_MIRTH], (oIn - 1) * sizeof(int16_t)));
       CHECK(v.wi[U_MIRTH][I_BIAS] == w.wi[U_MIRTH][I_BIAS] && v.b[U_LENS] == w.b[U_LENS]);
       if (oIn <= I_PRESENCE)
-        CHECK(v.wi[U_SLEEP][I_PRESENCE] == MindNet::prior(U_SLEEP, I_PRESENCE) &&
-              v.wi[U_DROWSY][I_BATTERY] == MindNet::prior(U_DROWSY, I_BATTERY));
+        CHECK(v.wi[U_SLEEP][I_PRESENCE] == MindNet::wQ(MindNet::prior(U_SLEEP, I_PRESENCE)) &&
+              v.wi[U_DROWSY][I_BATTERY] == MindNet::wQ(MindNet::prior(U_DROWSY, I_BATTERY)));
       else
         CHECK(v.wi[U_SLEEP][I_PRESENCE] == w.wi[U_SLEEP][I_PRESENCE]);
-      if (oIn <= I_WATCHED) CHECK(v.wi[U_MIRTH][I_WATCHED] == MindNet::prior(U_MIRTH, I_WATCHED));
-      if (oIn <= I_SCREEN) CHECK(v.wi[U_CURIOUS][I_SCREEN] == MindNet::prior(U_CURIOUS, I_SCREEN));
-      CHECK(v.wi[U_MIRTH][I_TRUST] == MindNet::prior(U_MIRTH, I_TRUST));
+      if (oIn <= I_WATCHED) CHECK(v.wi[U_MIRTH][I_WATCHED] == MindNet::wQ(MindNet::prior(U_MIRTH, I_WATCHED)));
+      if (oIn <= I_SCREEN) CHECK(v.wi[U_CURIOUS][I_SCREEN] == MindNet::wQ(MindNet::prior(U_CURIOUS, I_SCREEN)));
+      CHECK(v.wi[U_MIRTH][I_TRUST] == MindNet::wQ(MindNet::prior(U_MIRTH, I_TRUST)));
       CHECK(!memcmp(v.hourLike, w.hourLike, sizeof v.hourLike) &&
             !memcmp(v.wr[oOut - 1], w.wr[oOut - 1], sizeof v.wr[0]));
       if (ver == 2)
-        CHECK(v.wi[U_HEAD_X][I_TOUCH_X] == MindNet::prior(U_HEAD_X, I_TOUCH_X) && n3.shift(U_HEAD_Y) == 0);
-      if (ver >= 3) CHECK(!memcmp(v.wi[U_HEAD_X], w.wi[U_HEAD_X], (oIn - 1) * sizeof(float)));
+        CHECK(v.wi[U_HEAD_X][I_TOUCH_X] == MindNet::wQ(MindNet::prior(U_HEAD_X, I_TOUCH_X)) && n3.shift(U_HEAD_Y) == 0);
+      if (ver >= 3) CHECK(!memcmp(v.wi[U_HEAD_X], w.wi[U_HEAD_X], (oIn - 1) * sizeof(int16_t)));
       CHECK(!n3.load(old.data(), old.size() - 4));
       old[0] = 1;
       CHECK(!n3.load(old.data(), old.size()));
@@ -307,7 +316,7 @@ int main() {
       m.step(calm(), 0.1f);
       m.reward(1.f);
     }
-    CHECK(fabsf(m.weights().wi[U_MIRTH][I_VALENCE] - w0.wi[U_MIRTH][I_VALENCE]) < 1e-3f);
+    CHECK(fabsf(MindNet::wF(m.weights().wi[U_MIRTH][I_VALENCE] - w0.wi[U_MIRTH][I_VALENCE])) < 1e-3f);
   }
   //==============================
   // explain
@@ -735,8 +744,7 @@ int main() {
       m.step(afternoon, 0.1f);
       m.reward(-0.6f);
     }
-    CHECK(m.weights().hourLike[9] > 0.5f && m.weights().hourLike[15] < -0.4f &&
-          m.weights().hourLike[3] == 0.f);
+    CHECK(m.hourLiked(9) > 0.5f && m.hourLiked(15) < -0.4f && m.hourLiked(3) == 0.f);
     m.step(morning, 0.1f);
     CHECK(m.input(I_HOUR_LIKE) > 0.5f);
   }
